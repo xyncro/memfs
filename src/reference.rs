@@ -43,29 +43,27 @@ where
 
 // ParentRef
 
-#[derive(Clone, Debug)]
-pub struct ParentRef<D, F>
+#[derive(Debug)]
+pub enum ParentRef<D, F>
 where
     D: DirectoryData,
     F: FileData,
 {
-    name: String,
-    _parent: DirectoryWeak<D, F>,
+    Directory(String, DirectoryWeak<D, F>),
 }
 
 // -----------------------------------------------------------------------------
 
-// ParentRef - Create
+// ParentRef - Trait Implementations
 
-impl<D, F> ParentRef<D, F>
+impl<D, F> Clone for ParentRef<D, F>
 where
     D: DirectoryData,
     F: FileData,
 {
-    pub fn create(name: String, parent: DirectoryWeak<D, F>) -> Self {
-        Self {
-            _parent: parent,
-            name,
+    fn clone(&self) -> Self {
+        match self {
+            Self::Directory(name, dir) => Self::Directory(name.clone(), dir.clone()),
         }
     }
 }
@@ -80,6 +78,8 @@ where
     F: FileData,
 {
     pub fn name(&self) -> String {
-        self.name.clone()
+        match self {
+            Self::Directory(name, _) => name.clone(),
+        }
     }
 }

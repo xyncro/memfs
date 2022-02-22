@@ -22,6 +22,20 @@ pub trait Named {
 
 // Public Exports
 
-pub use directory::Directory;
-pub use file::File;
+pub use directory::{
+    Directory,
+    DirectoryData,
+};
+pub use error::{
+    FindError,
+    GetError,
+};
+pub use file::{
+    File,
+    FileData,
+};
 pub use file_system::FileSystem;
+pub use reference::{
+    ChildRef,
+    ParentRef,
+};

@@ -3,23 +3,35 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures_util::FutureExt;
 use tokio::sync::{
-    RwLock,
-    RwLockReadGuard,
+    RwLock as Lock,
+    RwLockReadGuard as Read,
 };
 
 use crate::{
-    directory::DirectoryData,
-    reference::ParentRef,
+    DirectoryData,
     Named,
+    ParentRef,
 };
+
+// =============================================================================
+
+// FileData
 
 pub trait FileData = Default + Send + Sync;
 
+// =============================================================================
+
+// File
+
 #[derive(Debug)]
-pub struct File<D, F>(Arc<RwLock<FileInternal<D, F>>>)
+pub struct File<D, F>(Arc<Lock<FileInternal<D, F>>>)
 where
     D: DirectoryData,
     F: FileData;
+
+// -----------------------------------------------------------------------------
+
+// File - Trait Implementations
 
 impl<D, F> Clone for File<D, F>
 where
@@ -42,15 +54,23 @@ where
     }
 }
 
+// -----------------------------------------------------------------------------
+
+// File - Read/Write (Internal)
+
 impl<D, F> File<D, F>
 where
     D: DirectoryData,
     F: FileData,
 {
-    async fn read_lock<T>(&self, f: impl FnOnce(RwLockReadGuard<FileInternal<D, F>>) -> T) -> T {
+    async fn read_lock<T>(&self, f: impl FnOnce(Read<FileInternal<D, F>>) -> T) -> T {
         self.0.read().map(f).await
     }
 }
+
+// =============================================================================
+
+// FileInternal
 
 #[derive(Debug)]
 pub struct FileInternal<D, F>

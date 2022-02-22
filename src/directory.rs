@@ -18,17 +18,13 @@ use tokio::sync::{
 };
 
 use crate::{
-    error::{
-        FindError,
-        GetError,
-    },
-    file::FileData,
-    reference::{
-        ChildRef,
-        ParentRef,
-    },
+    ChildRef,
     File,
+    FileData,
+    FindError,
+    GetError,
     Named,
+    ParentRef,
 };
 
 // =============================================================================

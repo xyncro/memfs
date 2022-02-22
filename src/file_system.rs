@@ -1,8 +1,12 @@
 use crate::{
-    directory::DirectoryData,
-    file::FileData,
     Directory,
+    DirectoryData,
+    FileData,
 };
+
+// =============================================================================
+
+// FileSystem
 
 #[derive(Debug)]
 pub struct FileSystem<D, F>
@@ -13,7 +17,9 @@ where
     root: Directory<D, F>,
 }
 
-// Create
+// -----------------------------------------------------------------------------
+
+// FileSystem - Create
 
 impl<D, F> FileSystem<D, F>
 where
@@ -27,7 +33,9 @@ where
     }
 }
 
-// Root
+// -----------------------------------------------------------------------------
+
+// FileSystem - Root
 
 impl<D, F> FileSystem<D, F>
 where
