@@ -1,5 +1,7 @@
 [package]
 name = "memfs"
+description = "An in-memory filesystem-like structure with parameterised nodes for files and directories"
+license = "MIT"
 version = "0.1.0"
 edition = "2021"
 
