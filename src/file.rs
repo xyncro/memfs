@@ -50,7 +50,7 @@ where
     F: FileData,
 {
     async fn named(&self) -> Option<String> {
-        self.read_lock(|d| Some(d.parent.name())).await
+        self.read_lock(|file| Some(file.parent.name())).await
     }
 }
 

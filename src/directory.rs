@@ -64,10 +64,14 @@ where
     F: FileData,
 {
     async fn named(&self) -> Option<String> {
-        self.read_lock(|d| d.parent.as_ref().map(|p| p.name()))
+        self.read_lock(|dir| dir.parent.as_ref().map(|parent| parent.name()))
             .await
     }
 }
+
+// -----------------------------------------------------------------------------
+
+// Directory - Read/Write (Internal)
 
 impl<D, F> Directory<D, F>
 where
@@ -111,9 +115,9 @@ mod create_tests {
     async fn create_root() {
         let dir: Directory<(), ()> = Directory::create_root();
 
-        assert_eq!(dir.read_lock(|d| d.children.len()).await, 0);
-        assert_eq!(dir.read_lock(|d| d._data).await, Default::default());
-        assert_eq!(dir.read_lock(|d| d.parent.is_none()).await, true);
+        assert_eq!(dir.read_lock(|dir| dir.children.len()).await, 0);
+        assert_eq!(dir.read_lock(|dir| dir._data).await, Default::default());
+        assert_eq!(dir.read_lock(|dir| dir.parent.is_none()).await, true);
     }
 }
 
@@ -127,37 +131,31 @@ where
     F: FileData,
 {
     pub async fn count(&self) -> usize {
-        self.read_lock(|d| d.children.len()).await
+        self.read_lock(|dir| dir.children.len()).await
     }
 
     pub async fn count_dirs(&self) -> usize {
-        self.read_lock(|d| {
-            let mut count = 0;
-
-            for (_, child) in d.children.iter() {
-                match child {
-                    ChildRef::Directory(_) => count += 1,
-                    _ => {}
-                }
-            }
-
-            count
+        self.count_predicate(|child| match child {
+            ChildRef::Directory(_) => true,
+            _ => false,
         })
         .await
     }
 
     pub async fn count_files(&self) -> usize {
-        self.read_lock(|d| {
-            let mut count = 0;
+        self.count_predicate(|child| match child {
+            ChildRef::File(_) => true,
+            _ => false,
+        })
+        .await
+    }
 
-            for (_, child) in d.children.iter() {
-                match child {
-                    ChildRef::File(_) => count += 1,
-                    _ => {}
-                }
-            }
-
-            count
+    async fn count_predicate(&self, predicate: impl Fn(&ChildRef<D, F>) -> bool) -> usize {
+        self.read_lock(|dir| {
+            dir.children
+                .iter()
+                .filter(|(_, child)| predicate(child))
+                .count()
         })
         .await
     }
@@ -187,13 +185,13 @@ where
     F: FileData,
 {
     pub async fn get(&self, name: &str) -> Option<ChildRef<D, F>> {
-        self.read_lock(|d| d.children.get(name).map(Clone::clone))
+        self.read_lock(|dir| dir.children.get(name).map(Clone::clone))
             .await
     }
 
     pub async fn get_dir(&self, name: &str) -> Result<Option<Directory<D, F>>, GetError> {
         self.get(name)
-            .map(|c| match c {
+            .map(|child| match child {
                 Some(ChildRef::Directory(dir)) => Ok(Some(dir)),
                 Some(ChildRef::File(_)) => Err(GetError::ExpectedDir),
                 _ => Ok(None),
@@ -203,7 +201,7 @@ where
 
     pub async fn get_file(&self, name: &str) -> Result<Option<File<D, F>>, GetError> {
         self.get(name)
-            .map(|c| match c {
+            .map(|child| match child {
                 Some(ChildRef::Directory(_)) => Err(GetError::ExpectedFile),
                 Some(ChildRef::File(file)) => Ok(Some(file)),
                 _ => Ok(None),
@@ -232,7 +230,7 @@ where
                         Some(child) => current = child,
                         _ => return Ok(None),
                     },
-                    ChildRef::File(_file) => {
+                    ChildRef::File(_) => {
                         return Err(FindError::IntermediateFile {
                             name: name.to_string_lossy().into(),
                         });
@@ -250,7 +248,7 @@ where
         path: impl AsRef<Path>,
     ) -> Result<Option<Directory<D, F>>, FindError> {
         self.find(path)
-            .map(|c| match c {
+            .map(|child| match child {
                 Ok(Some(ChildRef::Directory(dir))) => Ok(Some(dir)),
                 Ok(Some(ChildRef::File(_))) => Err(FindError::ExpectedDir),
                 Ok(_) => Ok(None),
@@ -261,7 +259,7 @@ where
 
     pub async fn find_file(&self, path: impl AsRef<Path>) -> Result<Option<File<D, F>>, FindError> {
         self.find(path)
-            .map(|c| match c {
+            .map(|child| match child {
                 Ok(Some(ChildRef::Directory(_))) => Err(FindError::ExpectedFile),
                 Ok(Some(ChildRef::File(file))) => Ok(Some(file)),
                 Ok(_) => Ok(None),
