@@ -43,6 +43,10 @@ where
     D: DirectoryData,
     F: FileData;
 
+// -----------------------------------------------------------------------------
+
+// Directory - Trait Implementations
+
 impl<D, F> Clone for Directory<D, F>
 where
     D: DirectoryData,
@@ -52,10 +56,6 @@ where
         Self(self.0.clone())
     }
 }
-
-// -----------------------------------------------------------------------------
-
-// Directory - Trait Implementations
 
 #[async_trait]
 impl<D, F> Named for Directory<D, F>
