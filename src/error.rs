@@ -21,10 +21,10 @@ pub enum GetError {
 
 // -----------------------------------------------------------------------------
 
-// Directory Errors - Find
+// Directory Errors - Get Path
 
 #[derive(Debug, Diagnostic, Error)]
-pub enum FindError {
+pub enum GetPathError {
     #[diagnostic(code(directory::find), help("check the contents of the tree"))]
     #[error("intermediate file '{name}' in path")]
     IntermediateFile { name: String },

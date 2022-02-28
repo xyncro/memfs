@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use crate::{
     Directory,
     DirectoryData,
@@ -15,6 +17,22 @@ where
     F: FileData,
 {
     root: Directory<D, F>,
+}
+
+// -----------------------------------------------------------------------------
+
+// FileSystem - Trait Implementations
+
+impl<D, F> Deref for FileSystem<D, F>
+where
+    D: DirectoryData,
+    F: FileData,
+{
+    type Target = Directory<D, F>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.root
+    }
 }
 
 // -----------------------------------------------------------------------------

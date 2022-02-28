@@ -18,18 +18,17 @@ use tokio::sync::{
 };
 
 use crate::{
-    ChildRef,
     File,
     FileData,
-    FindError,
     GetError,
+    GetPathError,
     Named,
-    ParentRef,
+    Node,
 };
 
 // =============================================================================
 
-// Directory Data
+// DirectoryData
 
 pub trait DirectoryData = Default + Send + Sync;
 
@@ -64,7 +63,7 @@ where
     F: FileData,
 {
     async fn named(&self) -> Option<String> {
-        self.read_lock(|dir| dir.parent.as_ref().map(|parent| parent.name()))
+        self.read_lock(|dir| dir.parent.as_ref().map(|parent| parent.0.clone()))
             .await
     }
 }
@@ -92,7 +91,7 @@ where
     D: DirectoryData,
     F: FileData,
 {
-    pub fn create(data: Option<D>, parent: Option<ParentRef<D, F>>) -> Self {
+    pub(crate) fn create(data: Option<D>, parent: Option<(String, DirectoryWeak<D, F>)>) -> Self {
         Self(Arc::new_cyclic(|weak| {
             Lock::new(DirectoryInternal::create(
                 data,
@@ -102,7 +101,7 @@ where
         }))
     }
 
-    pub fn create_root() -> Self {
+    pub(crate) fn create_root() -> Self {
         Self::create(None, None)
     }
 }
@@ -134,27 +133,27 @@ where
         self.read_lock(|dir| dir.children.len()).await
     }
 
-    pub async fn count_dirs(&self) -> usize {
+    pub async fn count_dir(&self) -> usize {
         self.count_predicate(|child| match child {
-            ChildRef::Directory(_) => true,
+            Node::Directory(_) => true,
             _ => false,
         })
         .await
     }
 
-    pub async fn count_files(&self) -> usize {
+    pub async fn count_file(&self) -> usize {
         self.count_predicate(|child| match child {
-            ChildRef::File(_) => true,
+            Node::File(_) => true,
             _ => false,
         })
         .await
     }
 
-    async fn count_predicate(&self, predicate: impl Fn(&ChildRef<D, F>) -> bool) -> usize {
+    async fn count_predicate(&self, predicate: impl Fn(&Node<D, F>) -> bool) -> usize {
         self.read_lock(|dir| {
             dir.children
-                .iter()
-                .filter(|(_, child)| predicate(child))
+                .values()
+                .filter(|child| predicate(child))
                 .count()
         })
         .await
@@ -170,8 +169,8 @@ mod count_tests {
         let dir: Directory<(), ()> = Directory::create_root();
 
         assert_eq!(dir.count().await, 0);
-        assert_eq!(dir.count_dirs().await, 0);
-        assert_eq!(dir.count_files().await, 0);
+        assert_eq!(dir.count_dir().await, 0);
+        assert_eq!(dir.count_file().await, 0);
     }
 }
 
@@ -179,59 +178,91 @@ mod count_tests {
 
 // Directory - Get
 
+type GetResult<T> = Result<Option<T>, GetError>;
+
 impl<D, F> Directory<D, F>
 where
     D: DirectoryData,
     F: FileData,
 {
-    pub async fn get(&self, name: &str) -> Option<ChildRef<D, F>> {
+    pub async fn get(&self, name: &str) -> Option<Node<D, F>> {
         self.read_lock(|dir| dir.children.get(name).map(Clone::clone))
             .await
     }
 
-    pub async fn get_dir(&self, name: &str) -> Result<Option<Directory<D, F>>, GetError> {
+    pub async fn get_dir(&self, name: &str) -> GetResult<Directory<D, F>> {
         self.get(name)
             .map(|child| match child {
-                Some(ChildRef::Directory(dir)) => Ok(Some(dir)),
-                Some(ChildRef::File(_)) => Err(GetError::ExpectedDir),
+                Some(Node::Directory(dir)) => Ok(Some(dir)),
+                Some(Node::File(_)) => Err(GetError::ExpectedDir),
                 _ => Ok(None),
             })
             .await
     }
 
-    pub async fn get_file(&self, name: &str) -> Result<Option<File<D, F>>, GetError> {
+    pub async fn get_file(&self, name: &str) -> GetResult<File<D, F>> {
         self.get(name)
             .map(|child| match child {
-                Some(ChildRef::Directory(_)) => Err(GetError::ExpectedFile),
-                Some(ChildRef::File(file)) => Ok(Some(file)),
+                Some(Node::Directory(_)) => Err(GetError::ExpectedFile),
+                Some(Node::File(file)) => Ok(Some(file)),
                 _ => Ok(None),
             })
             .await
     }
 }
 
+#[cfg(test)]
+mod get_tests {
+    use crate::Directory;
+
+    #[tokio::test]
+    async fn get() {
+        let dir: Directory<(), ()> = Directory::create_root();
+
+        assert!(dir.get("test").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_dir() {
+        let dir: Directory<(), ()> = Directory::create_root();
+
+        assert!(dir.get_dir("test").await.is_ok());
+        assert!(dir.get_dir("test").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn get_file() {
+        let dir: Directory<(), ()> = Directory::create_root();
+
+        assert!(dir.get_file("test").await.is_ok());
+        assert!(dir.get_file("test").await.unwrap().is_none());
+    }
+}
+
 // -----------------------------------------------------------------------------
 
-// Directory - Find
+// Directory - Get (by) Path
+
+type GetPathResult<T> = Result<Option<T>, GetPathError>;
 
 impl<D, F> Directory<D, F>
 where
     D: DirectoryData,
     F: FileData,
 {
-    pub async fn find(&self, path: impl AsRef<Path>) -> Result<Option<ChildRef<D, F>>, FindError> {
-        let mut current = ChildRef::Directory(self.clone());
+    pub async fn get_path(&self, path: impl AsRef<Path>) -> GetPathResult<Node<D, F>> {
+        let mut current = Node::Directory(self.clone());
         let components = path.as_ref().components();
 
         for component in components {
             match component {
                 Component::Normal(name) => match &current {
-                    ChildRef::Directory(dir) => match dir.get(&name.to_string_lossy()).await {
+                    Node::Directory(dir) => match dir.get(&name.to_string_lossy()).await {
                         Some(child) => current = child,
                         _ => return Ok(None),
                     },
-                    ChildRef::File(_) => {
-                        return Err(FindError::IntermediateFile {
+                    _ => {
+                        return Err(GetPathError::IntermediateFile {
                             name: name.to_string_lossy().into(),
                         });
                     }
@@ -243,25 +274,22 @@ where
         Ok(Some(current))
     }
 
-    pub async fn find_dir(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Result<Option<Directory<D, F>>, FindError> {
-        self.find(path)
+    pub async fn get_path_dir(&self, path: impl AsRef<Path>) -> GetPathResult<Directory<D, F>> {
+        self.get_path(path)
             .map(|child| match child {
-                Ok(Some(ChildRef::Directory(dir))) => Ok(Some(dir)),
-                Ok(Some(ChildRef::File(_))) => Err(FindError::ExpectedDir),
+                Ok(Some(Node::Directory(dir))) => Ok(Some(dir)),
+                Ok(Some(Node::File(_))) => Err(GetPathError::ExpectedDir),
                 Ok(_) => Ok(None),
                 Err(err) => Err(err),
             })
             .await
     }
 
-    pub async fn find_file(&self, path: impl AsRef<Path>) -> Result<Option<File<D, F>>, FindError> {
-        self.find(path)
+    pub async fn get_path_file(&self, path: impl AsRef<Path>) -> GetPathResult<File<D, F>> {
+        self.get_path(path)
             .map(|child| match child {
-                Ok(Some(ChildRef::Directory(_))) => Err(FindError::ExpectedFile),
-                Ok(Some(ChildRef::File(file))) => Ok(Some(file)),
+                Ok(Some(Node::Directory(_))) => Err(GetPathError::ExpectedFile),
+                Ok(Some(Node::File(file))) => Ok(Some(file)),
                 Ok(_) => Ok(None),
                 Err(err) => Err(err),
             })
@@ -270,31 +298,31 @@ where
 }
 
 #[cfg(test)]
-mod find_tests {
+mod get_path_tests {
     use crate::Directory;
 
     #[tokio::test]
-    async fn find() {
+    async fn get_path() {
         let dir: Directory<(), ()> = Directory::create_root();
 
-        assert!(dir.find("/test").await.is_ok());
-        assert!(dir.find("/test").await.unwrap().is_none());
+        assert!(dir.get_path("/test").await.is_ok());
+        assert!(dir.get_path("/test").await.unwrap().is_none());
     }
 
     #[tokio::test]
-    async fn find_dir() {
+    async fn get_dir_path() {
         let dir: Directory<(), ()> = Directory::create_root();
 
-        assert!(dir.find_dir("/test").await.is_ok());
-        assert!(dir.find_dir("/test").await.unwrap().is_none());
+        assert!(dir.get_path_dir("/test").await.is_ok());
+        assert!(dir.get_path_dir("/test").await.unwrap().is_none());
     }
 
     #[tokio::test]
-    async fn find_file() {
+    async fn get_file_path() {
         let dir: Directory<(), ()> = Directory::create_root();
 
-        assert!(dir.find_file("/test").await.is_ok());
-        assert!(dir.find_file("/test").await.unwrap().is_none());
+        assert!(dir.get_path_file("/test").await.is_ok());
+        assert!(dir.get_path_file("/test").await.unwrap().is_none());
     }
 }
 
@@ -332,9 +360,9 @@ where
     D: DirectoryData,
     F: FileData,
 {
-    children: HashMap<String, ChildRef<D, F>>,
+    children: HashMap<String, Node<D, F>>,
     _data: D,
-    parent: Option<ParentRef<D, F>>,
+    parent: Option<(String, DirectoryWeak<D, F>)>,
     _weak: DirectoryWeak<D, F>,
 }
 
@@ -349,7 +377,7 @@ where
 {
     pub fn create(
         data: Option<D>,
-        parent: Option<ParentRef<D, F>>,
+        parent: Option<(String, DirectoryWeak<D, F>)>,
         weak: DirectoryWeak<D, F>,
     ) -> Self {
         Self {

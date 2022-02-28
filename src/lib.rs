@@ -5,7 +5,7 @@ mod directory;
 mod error;
 mod file;
 mod file_system;
-mod reference;
+mod node;
 
 use async_trait::async_trait;
 
@@ -27,15 +27,12 @@ pub use directory::{
     DirectoryData,
 };
 pub use error::{
-    FindError,
     GetError,
+    GetPathError,
 };
 pub use file::{
     File,
     FileData,
 };
 pub use file_system::FileSystem;
-pub use reference::{
-    ChildRef,
-    ParentRef,
-};
+pub use node::Node;

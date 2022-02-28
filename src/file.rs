@@ -8,9 +8,9 @@ use tokio::sync::{
 };
 
 use crate::{
+    directory::DirectoryWeak,
     DirectoryData,
     Named,
-    ParentRef,
 };
 
 // =============================================================================
@@ -50,7 +50,7 @@ where
     F: FileData,
 {
     async fn named(&self) -> Option<String> {
-        self.read_lock(|file| Some(file.parent.name())).await
+        self.read_lock(|file| Some(file.parent.0.clone())).await
     }
 }
 
@@ -79,5 +79,5 @@ where
     F: FileData,
 {
     _data: F,
-    parent: ParentRef<D, F>,
+    parent: (String, DirectoryWeak<D, F>),
 }
