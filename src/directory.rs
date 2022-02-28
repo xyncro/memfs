@@ -18,12 +18,15 @@ use tokio::sync::{
 };
 
 use crate::{
+    error::OpenError,
+    Child,
     File,
     FileData,
     GetError,
     GetPathError,
-    Named,
+    Name,
     Node,
+    Root,
 };
 
 // =============================================================================
@@ -37,7 +40,7 @@ pub trait DirectoryData = Default + Send + Sync;
 // Directory
 
 #[derive(Debug)]
-pub struct Directory<D, F>(Arc<Lock<DirectoryInternal<D, F>>>)
+pub struct Directory<D, F>(pub(crate) Arc<Lock<DirectoryInternal<D, F>>>)
 where
     D: DirectoryData,
     F: FileData;
@@ -57,14 +60,39 @@ where
 }
 
 #[async_trait]
-impl<D, F> Named for Directory<D, F>
+impl<D, F> Name for Directory<D, F>
 where
     D: DirectoryData,
     F: FileData,
 {
-    async fn named(&self) -> Option<String> {
+    async fn name(&self) -> Option<String> {
         self.read_lock(|dir| dir.parent.as_ref().map(|parent| parent.0.clone()))
             .await
+    }
+}
+
+#[async_trait]
+impl<D, F> Child<D, F> for Directory<D, F>
+where
+    D: DirectoryData,
+    F: FileData,
+{
+    async fn parent(&self) -> Option<Directory<D, F>> {
+        self.read_lock(|dir| dir.parent.as_ref().map(|parent| parent.1.clone()))
+            .map(|parent| parent.and_then(|DirectoryWeak(dir)| dir.upgrade()))
+            .map(|parent| parent.map(Directory))
+            .await
+    }
+}
+
+#[async_trait]
+impl<D, F> Root<D, F> for Directory<D, F>
+where
+    D: DirectoryData,
+    F: FileData,
+{
+    async fn is_root(&self) -> bool {
+        self.read_lock(|dir| dir.parent.is_none()).await
     }
 }
 
@@ -171,6 +199,90 @@ mod count_tests {
         assert_eq!(dir.count().await, 0);
         assert_eq!(dir.count_dir().await, 0);
         assert_eq!(dir.count_file().await, 0);
+    }
+}
+
+// -----------------------------------------------------------------------------
+
+// Directory - Open (?)
+
+pub type OpenResult<T> = Result<Option<T>, OpenError>;
+
+pub enum OpenIntermediateAction {
+    CreateDefault,
+    Fail,
+}
+
+pub enum OpenEndpointAction {
+    CreateDefault,
+    Fail,
+}
+
+impl<D, F> Directory<D, F>
+where
+    D: DirectoryData,
+    F: FileData,
+{
+    pub async fn open(
+        &self,
+        path: impl AsRef<Path>,
+        _intermediate: OpenIntermediateAction,
+        _endpoint: OpenEndpointAction,
+    ) -> OpenResult<Node<D, F>> {
+        let path = path.as_ref();
+        let components = path.components();
+
+        let mut current = Node::Directory(self.clone());
+
+        for component in components {
+            match component {
+                Component::CurDir => {}
+                Component::Prefix(_) => return Err(OpenError::UnexpectedPrefix),
+                Component::RootDir => match current.is_root().await {
+                    true => {}
+                    _ => return Err(OpenError::UnexpectedRoot),
+                },
+                Component::ParentDir => match current.parent().await {
+                    Some(dir) => current = Node::Directory(dir),
+                    _ => panic!("Unexpected Orphan"),
+                },
+                Component::Normal(_name) => match &current {
+                    Node::Directory(_dir) => {}
+                    Node::File(_) => panic!("Unexpected File"),
+                },
+            }
+        }
+
+        Ok(Some(current))
+
+        /*
+
+        Convert Path to PathBuf?
+        Validate Path (Root or Relative)?
+        Set Current to Node(self)
+
+        for each component in path components {
+            match component {
+                Prefix -> Error
+                Root -> Error unless Current is Root
+                Current -> Nothing
+                Parent -> Set Current to Parent
+                Normal ->
+                    match Current {
+                        Directory -> {
+                            match get named {
+                                Some(node) -> Set Current to Node(node)
+                                None -> {
+                                    Depends on Intermediate and Endpoint Actions
+                                }
+                            }
+                        },
+                        File -> Error
+                    }
+            }
+        }
+
+        */
     }
 }
 
@@ -360,10 +472,10 @@ where
     D: DirectoryData,
     F: FileData,
 {
-    children: HashMap<String, Node<D, F>>,
-    _data: D,
-    parent: Option<(String, DirectoryWeak<D, F>)>,
-    _weak: DirectoryWeak<D, F>,
+    pub(crate) children: HashMap<String, Node<D, F>>,
+    pub(crate) _data: D,
+    pub(crate) parent: Option<(String, DirectoryWeak<D, F>)>,
+    pub(crate) _weak: DirectoryWeak<D, F>,
 }
 
 // -----------------------------------------------------------------------------

@@ -35,3 +35,13 @@ pub enum GetPathError {
     #[error("expected directory but instead found file")]
     ExpectedDir,
 }
+
+#[derive(Debug, Diagnostic, Error)]
+pub enum OpenError {
+    #[diagnostic(code(directory::open), help("check the supplied path"))]
+    #[error("path contained a prefix, which is not supported")]
+    UnexpectedPrefix,
+    #[diagnostic(code(directory::get), help("check the supplied path"))]
+    #[error("path was an absolute (root) path, but the directory is not a root directory")]
+    UnexpectedRoot,
+}

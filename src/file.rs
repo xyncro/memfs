@@ -9,8 +9,10 @@ use tokio::sync::{
 
 use crate::{
     directory::DirectoryWeak,
+    Child,
+    Directory,
     DirectoryData,
-    Named,
+    Name,
 };
 
 // =============================================================================
@@ -24,7 +26,7 @@ pub trait FileData = Default + Send + Sync;
 // File
 
 #[derive(Debug)]
-pub struct File<D, F>(Arc<Lock<FileInternal<D, F>>>)
+pub struct File<D, F>(pub(crate) Arc<Lock<FileInternal<D, F>>>)
 where
     D: DirectoryData,
     F: FileData;
@@ -44,13 +46,27 @@ where
 }
 
 #[async_trait]
-impl<D, F> Named for File<D, F>
+impl<D, F> Name for File<D, F>
 where
     D: DirectoryData,
     F: FileData,
 {
-    async fn named(&self) -> Option<String> {
+    async fn name(&self) -> Option<String> {
         self.read_lock(|file| Some(file.parent.0.clone())).await
+    }
+}
+
+#[async_trait]
+impl<D, F> Child<D, F> for File<D, F>
+where
+    D: DirectoryData,
+    F: FileData,
+{
+    async fn parent(&self) -> Option<Directory<D, F>> {
+        self.read_lock(|file| file.parent.1.clone())
+            .map(|DirectoryWeak(parent)| parent.upgrade())
+            .map(|parent| parent.map(Directory))
+            .await
     }
 }
 
@@ -78,6 +94,6 @@ where
     D: DirectoryData,
     F: FileData,
 {
-    _data: F,
-    parent: (String, DirectoryWeak<D, F>),
+    pub(crate) _data: F,
+    pub(crate) parent: (String, DirectoryWeak<D, F>),
 }

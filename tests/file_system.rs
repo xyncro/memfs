@@ -4,5 +4,5 @@ use memfs::FileSystem;
 async fn empty_fs() {
     let fs: FileSystem<u32, u32> = FileSystem::new();
 
-    assert_eq!(fs.root().count().await, 0);
+    assert_eq!(fs.count().await, 0);
 }

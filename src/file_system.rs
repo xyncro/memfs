@@ -50,17 +50,3 @@ where
         }
     }
 }
-
-// -----------------------------------------------------------------------------
-
-// FileSystem - Root
-
-impl<D, F> FileSystem<D, F>
-where
-    D: DirectoryData,
-    F: FileData,
-{
-    pub fn root(&self) -> Directory<D, F> {
-        self.root.clone()
-    }
-}
