@@ -1,8 +1,9 @@
 use memfs::{
+    EndpointAction,
     FileSystem,
+    GetOptions,
+    IntermediateAction,
     Node,
-    OpenEndpoint,
-    OpenIntermediate,
 };
 
 #[tokio::test]
@@ -13,24 +14,21 @@ async fn empty_fs() {
 }
 
 #[tokio::test]
-async fn open() {
+async fn get() {
     let fs: FileSystem<u32, u32> = FileSystem::new();
-    let endpoint = fs
-        .open(
-            "/test_1/test_2",
-            OpenEndpoint::Default,
-            OpenIntermediate::Default,
-        )
-        .await;
+    let options = GetOptions::create(
+        IntermediateAction::CreateDefault,
+        EndpointAction::CreateDefault,
+    );
+
+    let endpoint = fs.get("/test_1/test_2", options).await;
 
     match endpoint {
         Ok(Some(Node::File(_))) => assert!(true),
         _ => assert!(false),
     }
 
-    let intermediate = fs
-        .open("/test_1", OpenEndpoint::None, OpenIntermediate::None)
-        .await;
+    let intermediate = fs.get("/test_1", Default::default()).await;
 
     match intermediate {
         Ok(Some(Node::Directory(_))) => assert!(true),

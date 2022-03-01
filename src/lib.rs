@@ -52,15 +52,12 @@ pub trait Root<D, F> {
 pub use directory::{
     Directory,
     DirectoryData,
-    OpenEndpoint,
-    OpenIntermediate,
-    OpenResult,
+    EndpointAction,
+    GetOptions,
+    GetResult,
+    IntermediateAction,
 };
-pub use error::{
-    GetError,
-    GetPathError,
-    OpenError,
-};
+pub use error::GetError;
 pub use file::{
     File,
     FileData,

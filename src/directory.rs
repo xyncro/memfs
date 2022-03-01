@@ -19,7 +19,7 @@ use tokio::sync::{
 };
 
 use crate::{
-    error::OpenError,
+    error::GetError,
     Child,
     File,
     FileData,
@@ -210,25 +210,78 @@ mod count_tests {
 
 // Directory - Open (?)
 
-pub type OpenResult<T> = Result<Option<T>, OpenError>;
+pub type GetResult<T> = Result<Option<T>, GetError>;
 
 // TODO: Tidy this in to a more meanigful config/options structure
 
-#[derive(Clone, Copy, Debug)]
-pub enum OpenIntermediate {
-    Default,
-    Error,
-    None,
+#[derive(Clone, Debug)]
+pub struct GetOptions {
+    intermediate: IntermediateAction,
+    endpoint: EndpointAction,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum OpenEndpoint {
-    Default,
-    Error,
-    None,
+impl Default for GetOptions {
+    fn default() -> Self {
+        Self {
+            intermediate: Default::default(),
+            endpoint: Default::default(),
+        }
+    }
 }
 
-#[derive(Clone, Copy, Debug)]
+impl GetOptions {
+    pub fn create(intermediate: IntermediateAction, endpoint: EndpointAction) -> Self {
+        Self {
+            intermediate,
+            endpoint,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum IntermediateAction {
+    CreateDefault,
+    ReturnError,
+    ReturnNone,
+}
+
+impl Default for IntermediateAction {
+    fn default() -> Self {
+        Self::ReturnNone
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum EndpointAction {
+    CreateDefault,
+    ReturnError,
+    ReturnNone,
+}
+
+impl Default for EndpointAction {
+    fn default() -> Self {
+        Self::ReturnNone
+    }
+}
+
+#[derive(Clone, Debug)]
+struct GetNormalOptions {
+    get: GetOptions,
+    name: String,
+    position: Position,
+}
+
+impl GetNormalOptions {
+    fn create(options: GetOptions, name: String, position: Position) -> Self {
+        Self {
+            get: options,
+            name,
+            position,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 enum Position {
     Endpoint,
     Intermediate,
@@ -239,33 +292,29 @@ where
     D: DirectoryData,
     F: FileData,
 {
-    pub async fn open(
-        &self,
-        path: impl AsRef<Path>,
-        end: OpenEndpoint,
-        inter: OpenIntermediate,
-    ) -> OpenResult<Node<D, F>> {
+    pub async fn get(&self, path: impl AsRef<Path>, options: GetOptions) -> GetResult<Node<D, F>> {
         let mut current = Some(Node::Directory(self.clone()));
         let mut components = path.as_ref().components().peekable();
 
         while let Some(component) = components.next() {
             match current.as_ref() {
-                Some(node) => match component {
+                Some(Node::Directory(dir)) => match component {
                     Component::CurDir => {}
-                    Component::Prefix(_) => current = self.open_prefix().await?,
-                    Component::RootDir => current = self.open_root(node.clone()).await?,
-                    Component::ParentDir => current = self.open_parent(node.clone()).await?,
+                    Component::Prefix(_) => current = dir.get_prefix().await?,
+                    Component::RootDir => current = dir.get_root().await?,
+                    Component::ParentDir => current = dir.get_parent().await?,
                     Component::Normal(name) => {
-                        let node = node.clone();
                         let name = String::from(name.to_string_lossy());
                         let position = match components.peek() {
                             Some(_) => Position::Intermediate,
                             _ => Position::Endpoint,
                         };
+                        let options = GetNormalOptions::create(options.clone(), name, position);
 
-                        current = self.open_normal(node, name, position, end, inter).await?
+                        current = dir.get_normal(options).await?
                     }
                 },
+                Some(Node::File(_)) => return Err(GetError::UnexpectedFile),
                 _ => return Ok(None),
             }
         }
@@ -273,66 +322,48 @@ where
         Ok(current)
     }
 
-    async fn open_prefix(&self) -> OpenResult<Node<D, F>> {
-        Err(OpenError::UnexpectedPrefix)
+    async fn get_prefix(&self) -> GetResult<Node<D, F>> {
+        Err(GetError::UnexpectedPrefix)
     }
 
-    async fn open_root(&self, current: Node<D, F>) -> OpenResult<Node<D, F>> {
-        match current.is_root().await {
-            true => Ok(Some(current)),
-            _ => Err(OpenError::UnexpectedRoot),
+    async fn get_root(&self) -> GetResult<Node<D, F>> {
+        match self.is_root().await {
+            true => Ok(Some(Node::Directory(self.clone()))),
+            _ => Err(GetError::UnexpectedRoot),
         }
     }
 
-    async fn open_parent(&self, current: Node<D, F>) -> OpenResult<Node<D, F>> {
-        match current.parent().await {
+    async fn get_parent(&self) -> GetResult<Node<D, F>> {
+        match self.parent().await {
             Some(parent) => Ok(Some(Node::Directory(parent))),
-            _ => Err(OpenError::UnexpectedOrphan),
+            _ => Err(GetError::UnexpectedOrphan),
         }
     }
 
-    async fn open_normal(
-        &self,
-        current: Node<D, F>,
-        name: String,
-        position: Position,
-        end: OpenEndpoint,
-        inter: OpenIntermediate,
-    ) -> OpenResult<Node<D, F>> {
-        match current {
-            Node::Directory(dir) => {
-                let node = dir
-                    .read_lock(|dir| dir.children.get(&name).map(Clone::clone))
-                    .await;
-
-                match node {
-                    Some(node) => Ok(Some(node)),
-                    _ => match position {
-                        Position::Endpoint => self.open_normal_end(dir, name, end).await,
-                        Position::Intermediate => self.open_normal_inter(dir, name, inter).await,
-                    },
-                }
-            }
-            Node::File(_) => Err(OpenError::UnexpectedFile),
+    async fn get_normal(&self, options: GetNormalOptions) -> GetResult<Node<D, F>> {
+        match self.get_normal_node(&options.name).await {
+            Some(node) => Ok(Some(node)),
+            _ => match options.position {
+                Position::Endpoint => self.get_normal_endpoint(options).await,
+                Position::Intermediate => self.get_normal_intermediate(options).await,
+            },
         }
     }
 
-    async fn open_normal_end(
-        &self,
-        dir: Directory<D, F>,
-        name: String,
-        end: OpenEndpoint,
-    ) -> OpenResult<Node<D, F>> {
-        match end {
-            OpenEndpoint::Error => Err(OpenError::EndpointNotFound),
-            OpenEndpoint::None => Ok(None),
-            OpenEndpoint::Default => {
-                dir.write_lock(|mut dir| {
-                    // TODO: We've assumed a file here. It doesn't have to be...
+    async fn get_normal_node(&self, name: &str) -> Option<Node<D, F>> {
+        self.read_lock(|dir| dir.children.get(name).map(Clone::clone))
+            .await
+    }
 
-                    let parent = (name.clone(), dir.weak.clone());
-                    let node = Node::File(File::create(None, parent));
-                    let node = match dir.children.try_insert(name, node) {
+    async fn get_normal_intermediate(&self, options: GetNormalOptions) -> GetResult<Node<D, F>> {
+        match options.get.intermediate {
+            IntermediateAction::ReturnError => Err(GetError::IntermediateNotFound),
+            IntermediateAction::ReturnNone => Ok(None),
+            IntermediateAction::CreateDefault => {
+                self.write_lock(|mut dir| {
+                    let parent = Some((options.name.clone(), dir.weak.clone()));
+                    let node = Node::Directory(Directory::create(None, parent));
+                    let node = match dir.children.try_insert(options.name, node) {
                         Ok(node) => node.clone(),
                         Err(err) => err.entry.get().clone(),
                     };
@@ -344,20 +375,17 @@ where
         }
     }
 
-    async fn open_normal_inter(
-        &self,
-        dir: Directory<D, F>,
-        name: String,
-        inter: OpenIntermediate,
-    ) -> OpenResult<Node<D, F>> {
-        match inter {
-            OpenIntermediate::Error => Err(OpenError::IntermediateNotFound),
-            OpenIntermediate::None => Ok(None),
-            OpenIntermediate::Default => {
-                dir.write_lock(|mut dir| {
-                    let parent = Some((name.clone(), dir.weak.clone()));
-                    let node = Node::Directory(Directory::create(None, parent));
-                    let node = match dir.children.try_insert(name, node) {
+    async fn get_normal_endpoint(&self, options: GetNormalOptions) -> GetResult<Node<D, F>> {
+        match options.get.endpoint {
+            EndpointAction::ReturnError => Err(GetError::EndpointNotFound),
+            EndpointAction::ReturnNone => Ok(None),
+            EndpointAction::CreateDefault => {
+                self.write_lock(|mut dir| {
+                    // TODO: We've assumed a file here. It doesn't have to be...
+
+                    let parent = (options.name.clone(), dir.weak.clone());
+                    let node = Node::File(File::create(None, parent));
+                    let node = match dir.children.try_insert(options.name, node) {
                         Ok(node) => node.clone(),
                         Err(err) => err.entry.get().clone(),
                     };
