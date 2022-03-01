@@ -3,7 +3,6 @@
 #![feature(trait_alias)]
 
 mod directory;
-mod error;
 mod file;
 mod file_system;
 mod node;
@@ -52,12 +51,12 @@ pub trait Root<D, F> {
 pub use directory::{
     Directory,
     DirectoryData,
-    EndpointAction,
+    GetEndpointAction,
+    GetIntermediateAction,
+    GetNodeError,
+    GetNodeResult,
     GetOptions,
-    GetResult,
-    IntermediateAction,
 };
-pub use error::GetError;
 pub use file::{
     File,
     FileData,
