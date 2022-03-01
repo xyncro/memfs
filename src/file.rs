@@ -84,6 +84,23 @@ where
     }
 }
 
+// -----------------------------------------------------------------------------
+
+// File - Create
+
+impl<D, F> File<D, F>
+where
+    D: DirectoryData,
+    F: FileData,
+{
+    pub(crate) fn create(data: Option<F>, parent: (String, DirectoryWeak<D, F>)) -> Self {
+        Self(Arc::new(Lock::new(FileInternal {
+            _data: data.unwrap_or_default(),
+            parent,
+        })))
+    }
+}
+
 // =============================================================================
 
 // FileInternal

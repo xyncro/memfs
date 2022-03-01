@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![feature(map_try_insert)]
 #![feature(trait_alias)]
 
 mod directory;
@@ -51,10 +52,13 @@ pub trait Root<D, F> {
 pub use directory::{
     Directory,
     DirectoryData,
+    OpenEndpoint,
+    OpenIntermediate,
 };
 pub use error::{
     GetError,
     GetPathError,
+    OpenError,
 };
 pub use file::{
     File,

@@ -15,6 +15,7 @@ use futures_util::FutureExt;
 use tokio::sync::{
     RwLock as Lock,
     RwLockReadGuard as Read,
+    RwLockWriteGuard as Write,
 };
 
 use crate::{
@@ -22,8 +23,6 @@ use crate::{
     Child,
     File,
     FileData,
-    GetError,
-    GetPathError,
     Name,
     Node,
     Root,
@@ -108,6 +107,10 @@ where
     async fn read_lock<T>(&self, f: impl FnOnce(Read<DirectoryInternal<D, F>>) -> T) -> T {
         self.0.read().map(f).await
     }
+
+    async fn write_lock<T>(&self, f: impl FnOnce(Write<DirectoryInternal<D, F>>) -> T) -> T {
+        self.0.write().map(f).await
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -121,11 +124,12 @@ where
 {
     pub(crate) fn create(data: Option<D>, parent: Option<(String, DirectoryWeak<D, F>)>) -> Self {
         Self(Arc::new_cyclic(|weak| {
-            Lock::new(DirectoryInternal::create(
-                data,
+            Lock::new(DirectoryInternal {
+                children: Default::default(),
+                _data: data.unwrap_or_default(),
                 parent,
-                DirectoryWeak(weak.clone()),
-            ))
+                weak: DirectoryWeak(weak.clone()),
+            })
         }))
     }
 
@@ -208,14 +212,24 @@ mod count_tests {
 
 pub type OpenResult<T> = Result<Option<T>, OpenError>;
 
-pub enum OpenIntermediateAction {
-    CreateDefault,
-    Fail,
+#[derive(Clone, Copy, Debug)]
+pub enum OpenIntermediate {
+    Default,
+    Error,
+    None,
 }
 
-pub enum OpenEndpointAction {
-    CreateDefault,
-    Fail,
+#[derive(Clone, Copy, Debug)]
+pub enum OpenEndpoint {
+    Default,
+    Error,
+    None,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Position {
+    Endpoint,
+    Intermediate,
 }
 
 impl<D, F> Directory<D, F>
@@ -226,215 +240,131 @@ where
     pub async fn open(
         &self,
         path: impl AsRef<Path>,
-        _intermediate: OpenIntermediateAction,
-        _endpoint: OpenEndpointAction,
+        end: OpenEndpoint,
+        inter: OpenIntermediate,
     ) -> OpenResult<Node<D, F>> {
-        let path = path.as_ref();
-        let components = path.components();
+        let mut current = Some(Node::Directory(self.clone()));
+        let mut components = path.as_ref().components().peekable();
 
-        let mut current = Node::Directory(self.clone());
+        while let Some(component) = components.next() {
+            match current.as_ref() {
+                Some(node) => match component {
+                    Component::CurDir => {}
+                    Component::Prefix(_) => current = self.open_prefix().await?,
+                    Component::RootDir => current = self.open_root(node.clone()).await?,
+                    Component::ParentDir => current = self.open_parent(node.clone()).await?,
+                    Component::Normal(name) => {
+                        let node = node.clone();
+                        let name = String::from(name.to_string_lossy());
+                        let position = match components.peek() {
+                            Some(_) => Position::Intermediate,
+                            _ => Position::Endpoint,
+                        };
 
-        for component in components {
-            match component {
-                Component::CurDir => {}
-                Component::Prefix(_) => return Err(OpenError::UnexpectedPrefix),
-                Component::RootDir => match current.is_root().await {
-                    true => {}
-                    _ => return Err(OpenError::UnexpectedRoot),
-                },
-                Component::ParentDir => match current.parent().await {
-                    Some(dir) => current = Node::Directory(dir),
-                    _ => panic!("Unexpected Orphan"),
-                },
-                Component::Normal(_name) => match &current {
-                    Node::Directory(_dir) => {}
-                    Node::File(_) => panic!("Unexpected File"),
-                },
-            }
-        }
-
-        Ok(Some(current))
-
-        /*
-
-        Convert Path to PathBuf?
-        Validate Path (Root or Relative)?
-        Set Current to Node(self)
-
-        for each component in path components {
-            match component {
-                Prefix -> Error
-                Root -> Error unless Current is Root
-                Current -> Nothing
-                Parent -> Set Current to Parent
-                Normal ->
-                    match Current {
-                        Directory -> {
-                            match get named {
-                                Some(node) -> Set Current to Node(node)
-                                None -> {
-                                    Depends on Intermediate and Endpoint Actions
-                                }
-                            }
-                        },
-                        File -> Error
+                        current = self.open_normal(node, name, position, end, inter).await?
                     }
+                },
+                _ => return Ok(None),
             }
         }
 
-        */
-    }
-}
-
-// -----------------------------------------------------------------------------
-
-// Directory - Get
-
-type GetResult<T> = Result<Option<T>, GetError>;
-
-impl<D, F> Directory<D, F>
-where
-    D: DirectoryData,
-    F: FileData,
-{
-    pub async fn get(&self, name: &str) -> Option<Node<D, F>> {
-        self.read_lock(|dir| dir.children.get(name).map(Clone::clone))
-            .await
+        Ok(current)
     }
 
-    pub async fn get_dir(&self, name: &str) -> GetResult<Directory<D, F>> {
-        self.get(name)
-            .map(|child| match child {
-                Some(Node::Directory(dir)) => Ok(Some(dir)),
-                Some(Node::File(_)) => Err(GetError::ExpectedDir),
-                _ => Ok(None),
-            })
-            .await
+    async fn open_prefix(&self) -> OpenResult<Node<D, F>> {
+        Err(OpenError::UnexpectedPrefix)
     }
 
-    pub async fn get_file(&self, name: &str) -> GetResult<File<D, F>> {
-        self.get(name)
-            .map(|child| match child {
-                Some(Node::Directory(_)) => Err(GetError::ExpectedFile),
-                Some(Node::File(file)) => Ok(Some(file)),
-                _ => Ok(None),
-            })
-            .await
-    }
-}
-
-#[cfg(test)]
-mod get_tests {
-    use crate::Directory;
-
-    #[tokio::test]
-    async fn get() {
-        let dir: Directory<(), ()> = Directory::create_root();
-
-        assert!(dir.get("test").await.is_none());
+    async fn open_root(&self, current: Node<D, F>) -> OpenResult<Node<D, F>> {
+        match current.is_root().await {
+            true => Ok(Some(current)),
+            _ => Err(OpenError::UnexpectedRoot),
+        }
     }
 
-    #[tokio::test]
-    async fn get_dir() {
-        let dir: Directory<(), ()> = Directory::create_root();
-
-        assert!(dir.get_dir("test").await.is_ok());
-        assert!(dir.get_dir("test").await.unwrap().is_none());
+    async fn open_parent(&self, current: Node<D, F>) -> OpenResult<Node<D, F>> {
+        match current.parent().await {
+            Some(parent) => Ok(Some(Node::Directory(parent))),
+            _ => Err(OpenError::UnexpectedOrphan),
+        }
     }
 
-    #[tokio::test]
-    async fn get_file() {
-        let dir: Directory<(), ()> = Directory::create_root();
+    async fn open_normal(
+        &self,
+        current: Node<D, F>,
+        name: String,
+        position: Position,
+        end: OpenEndpoint,
+        inter: OpenIntermediate,
+    ) -> OpenResult<Node<D, F>> {
+        match current {
+            Node::Directory(dir) => {
+                let node = dir
+                    .read_lock(|dir| dir.children.get(&name).map(Clone::clone))
+                    .await;
 
-        assert!(dir.get_file("test").await.is_ok());
-        assert!(dir.get_file("test").await.unwrap().is_none());
-    }
-}
-
-// -----------------------------------------------------------------------------
-
-// Directory - Get (by) Path
-
-type GetPathResult<T> = Result<Option<T>, GetPathError>;
-
-impl<D, F> Directory<D, F>
-where
-    D: DirectoryData,
-    F: FileData,
-{
-    pub async fn get_path(&self, path: impl AsRef<Path>) -> GetPathResult<Node<D, F>> {
-        let mut current = Node::Directory(self.clone());
-        let components = path.as_ref().components();
-
-        for component in components {
-            match component {
-                Component::Normal(name) => match &current {
-                    Node::Directory(dir) => match dir.get(&name.to_string_lossy()).await {
-                        Some(child) => current = child,
-                        _ => return Ok(None),
+                match node {
+                    Some(node) => Ok(Some(node)),
+                    _ => match position {
+                        Position::Endpoint => self.open_normal_end(dir, name, end).await,
+                        Position::Intermediate => self.open_normal_inter(dir, name, inter).await,
                     },
-                    _ => {
-                        return Err(GetPathError::IntermediateFile {
-                            name: name.to_string_lossy().into(),
-                        });
-                    }
-                },
-                _ => {}
+                }
+            }
+            Node::File(_) => Err(OpenError::UnexpectedFile),
+        }
+    }
+
+    async fn open_normal_end(
+        &self,
+        dir: Directory<D, F>,
+        name: String,
+        end: OpenEndpoint,
+    ) -> OpenResult<Node<D, F>> {
+        match end {
+            OpenEndpoint::Error => Err(OpenError::EndpointNotFound),
+            OpenEndpoint::None => Ok(None),
+            OpenEndpoint::Default => {
+                dir.write_lock(|mut dir| {
+                    // TODO: We've assumed a file here. It doesn't have to be...
+
+                    let parent = (name.clone(), dir.weak.clone());
+                    let node = Node::File(File::create(None, parent));
+                    let node = match dir.children.try_insert(name, node) {
+                        Ok(node) => node.clone(),
+                        Err(err) => err.entry.get().clone(),
+                    };
+
+                    Ok(Some(node))
+                })
+                .await
             }
         }
-
-        Ok(Some(current))
     }
 
-    pub async fn get_path_dir(&self, path: impl AsRef<Path>) -> GetPathResult<Directory<D, F>> {
-        self.get_path(path)
-            .map(|child| match child {
-                Ok(Some(Node::Directory(dir))) => Ok(Some(dir)),
-                Ok(Some(Node::File(_))) => Err(GetPathError::ExpectedDir),
-                Ok(_) => Ok(None),
-                Err(err) => Err(err),
-            })
-            .await
-    }
+    async fn open_normal_inter(
+        &self,
+        dir: Directory<D, F>,
+        name: String,
+        inter: OpenIntermediate,
+    ) -> OpenResult<Node<D, F>> {
+        match inter {
+            OpenIntermediate::Error => Err(OpenError::IntermediateNotFound),
+            OpenIntermediate::None => Ok(None),
+            OpenIntermediate::Default => {
+                dir.write_lock(|mut dir| {
+                    let parent = Some((name.clone(), dir.weak.clone()));
+                    let node = Node::Directory(Directory::create(None, parent));
+                    let node = match dir.children.try_insert(name, node) {
+                        Ok(node) => node.clone(),
+                        Err(err) => err.entry.get().clone(),
+                    };
 
-    pub async fn get_path_file(&self, path: impl AsRef<Path>) -> GetPathResult<File<D, F>> {
-        self.get_path(path)
-            .map(|child| match child {
-                Ok(Some(Node::Directory(_))) => Err(GetPathError::ExpectedFile),
-                Ok(Some(Node::File(file))) => Ok(Some(file)),
-                Ok(_) => Ok(None),
-                Err(err) => Err(err),
-            })
-            .await
-    }
-}
-
-#[cfg(test)]
-mod get_path_tests {
-    use crate::Directory;
-
-    #[tokio::test]
-    async fn get_path() {
-        let dir: Directory<(), ()> = Directory::create_root();
-
-        assert!(dir.get_path("/test").await.is_ok());
-        assert!(dir.get_path("/test").await.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn get_dir_path() {
-        let dir: Directory<(), ()> = Directory::create_root();
-
-        assert!(dir.get_path_dir("/test").await.is_ok());
-        assert!(dir.get_path_dir("/test").await.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn get_file_path() {
-        let dir: Directory<(), ()> = Directory::create_root();
-
-        assert!(dir.get_path_file("/test").await.is_ok());
-        assert!(dir.get_path_file("/test").await.unwrap().is_none());
+                    Ok(Some(node))
+                })
+                .await
+            }
+        }
     }
 }
 
@@ -472,31 +402,8 @@ where
     D: DirectoryData,
     F: FileData,
 {
-    pub(crate) children: HashMap<String, Node<D, F>>,
-    pub(crate) _data: D,
-    pub(crate) parent: Option<(String, DirectoryWeak<D, F>)>,
-    pub(crate) _weak: DirectoryWeak<D, F>,
-}
-
-// -----------------------------------------------------------------------------
-
-// DirectoryInternal - Create
-
-impl<D, F> DirectoryInternal<D, F>
-where
-    D: DirectoryData,
-    F: FileData,
-{
-    pub fn create(
-        data: Option<D>,
-        parent: Option<(String, DirectoryWeak<D, F>)>,
-        weak: DirectoryWeak<D, F>,
-    ) -> Self {
-        Self {
-            children: Default::default(),
-            _data: data.unwrap_or_default(),
-            parent,
-            _weak: weak,
-        }
-    }
+    children: HashMap<String, Node<D, F>>,
+    _data: D,
+    parent: Option<(String, DirectoryWeak<D, F>)>,
+    weak: DirectoryWeak<D, F>,
 }
