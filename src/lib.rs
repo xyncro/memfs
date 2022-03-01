@@ -54,6 +54,7 @@ pub use directory::{
     DirectoryData,
     OpenEndpoint,
     OpenIntermediate,
+    OpenResult,
 };
 pub use error::{
     GetError,

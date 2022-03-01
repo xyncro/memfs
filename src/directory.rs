@@ -212,6 +212,8 @@ mod count_tests {
 
 pub type OpenResult<T> = Result<Option<T>, OpenError>;
 
+// TODO: Tidy this in to a more meanigful config/options structure
+
 #[derive(Clone, Copy, Debug)]
 pub enum OpenIntermediate {
     Default,
