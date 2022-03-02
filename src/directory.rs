@@ -211,148 +211,47 @@ mod count_tests {
 
 // Directory - Get
 
-// GetOptions
-
-#[derive(Clone, Debug)]
-pub struct GetOptions {
-    intermediate: GetIntermediateAction,
-    endpoint: GetEndpointAction,
+#[derive(Clone, Copy, Debug)]
+pub enum GetType {
+    Directory,
+    File,
 }
 
-impl Default for GetOptions {
+impl Default for GetType {
     fn default() -> Self {
-        Self {
-            intermediate: Default::default(),
-            endpoint: Default::default(),
-        }
+        Self::Directory
     }
 }
 
-impl GetOptions {
-    pub fn create(intermediate: GetIntermediateAction, endpoint: GetEndpointAction) -> Self {
-        Self {
-            intermediate,
-            endpoint,
-        }
-    }
-}
-
-// GetIntermediateAction
-
-#[derive(Clone, Debug)]
-pub enum GetIntermediateAction {
+#[derive(Clone, Copy, Debug)]
+pub enum GetAction {
     CreateDefault,
-    ReturnError,
     ReturnNone,
 }
 
-impl Default for GetIntermediateAction {
+impl Default for GetAction {
     fn default() -> Self {
         Self::ReturnNone
     }
 }
 
-// GetEndpointAction
-
-#[derive(Clone, Debug)]
-pub enum GetEndpointAction {
-    CreateDefault,
-    ReturnError,
-    ReturnNone,
+#[derive(Clone, Copy, Debug)]
+enum GetPosition {
+    Child,
+    Parent,
 }
 
-impl Default for GetEndpointAction {
-    fn default() -> Self {
-        Self::ReturnNone
-    }
-}
-
-// GetDirResult
-
-pub type GetDirResult<D, F> = Result<Option<Directory<D, F>>, GetDirError>;
-
-// GetDirError
-
-#[derive(Debug, Diagnostic, Error)]
-pub enum GetDirError {
-    #[diagnostic(code(directory::get_dir::file), help("check the supplied path"))]
-    #[error("expected directory, but file found")]
-    UnexpectedFile,
-    #[error("internal error getting node")]
-    Node(#[from] GetNodeError),
-}
-
-// GetDir
-
-impl<D, F> Directory<D, F>
-where
-    D: DirectoryData,
-    F: FileData,
-{
-    pub async fn get_dir(&self, path: impl AsRef<Path>, options: GetOptions) -> GetDirResult<D, F> {
-        let options = GetNodeOptions {
-            get: options,
-            _get_node_type: GetNodeType::Directory,
-        };
-
-        match self.get_node(path, options).await {
-            Ok(Some(Node::Directory(dir))) => Ok(Some(dir)),
-            Ok(Some(Node::File(_))) => Err(GetDirError::UnexpectedFile),
-            Ok(None) => Ok(None),
-            Err(err) => Err(GetDirError::Node(err)),
+impl GetPosition {
+    fn from_next(component: Option<&Component>) -> Self {
+        match component {
+            Some(_) => Self::Parent,
+            _ => Self::Child,
         }
     }
 }
 
-// GetFileResult
-
-pub type GetFileResult<D, F> = Result<Option<File<D, F>>, GetFileError>;
-
-// GetFileError
-
 #[derive(Debug, Diagnostic, Error)]
-pub enum GetFileError {
-    #[diagnostic(code(directory::get_file::directory), help("check the supplied path"))]
-    #[error("expected file, but directory found")]
-    UnexpectedDirectory,
-    #[error("internal error getting node")]
-    Node(#[from] GetNodeError),
-}
-
-// GetFile
-
-impl<D, F> Directory<D, F>
-where
-    D: DirectoryData,
-    F: FileData,
-{
-    pub async fn get_file(
-        &self,
-        path: impl AsRef<Path>,
-        options: GetOptions,
-    ) -> GetFileResult<D, F> {
-        let options = GetNodeOptions {
-            get: options,
-            _get_node_type: GetNodeType::File,
-        };
-
-        match self.get_node(path, options).await {
-            Ok(Some(Node::Directory(_))) => Err(GetFileError::UnexpectedDirectory),
-            Ok(Some(Node::File(file))) => Ok(Some(file)),
-            Ok(None) => Ok(None),
-            Err(err) => Err(GetFileError::Node(err)),
-        }
-    }
-}
-
-// GetNodeResult
-
-pub type GetNodeResult<T> = Result<Option<T>, GetNodeError>;
-
-// GetNodeError
-
-#[derive(Debug, Diagnostic, Error)]
-pub enum GetNodeError {
+pub enum GetError {
     #[diagnostic(code(directory::get::file), help("check the supplied path"))]
     #[error("path indicated a directory, but a file was found")]
     UnexpectedFile,
@@ -371,25 +270,129 @@ pub enum GetNodeError {
     #[diagnostic(code(directory::get::intermediate), help("check the supplied path"))]
     #[error("an intermediate directory does not exist")]
     IntermediateNotFound,
+    #[diagnostic(code(directory::get::other), help("please report this error"))]
+    #[error("an internal error occurred")]
+    Other,
 }
 
-// GetNodeOptions
+impl<D, F> Directory<D, F>
+where
+    D: DirectoryData,
+    F: FileData,
+{
+    pub async fn get(
+        &self,
+        path: impl AsRef<Path>,
+        get_type: GetType,
+    ) -> Result<Option<Node<D, F>>, GetError> {
+        self.get_node(path, GetAction::ReturnNone, get_type).await
+    }
 
-#[derive(Clone, Debug)]
-struct GetNodeOptions {
-    get: GetOptions,
-    _get_node_type: GetNodeType,
+    pub async fn get_default(
+        &self,
+        path: impl AsRef<Path>,
+        get_type: GetType,
+    ) -> Result<Node<D, F>, GetError> {
+        match self
+            .get_node(path, GetAction::CreateDefault, get_type)
+            .await
+        {
+            Ok(Some(node)) => Ok(node),
+            Ok(None) => Err(GetError::Other),
+            Err(err) => Err(err),
+        }
+    }
 }
 
-// GetNodeType
-
-#[derive(Clone, Debug)]
-enum GetNodeType {
-    Directory,
-    File,
+#[derive(Debug, Diagnostic, Error)]
+pub enum GetDirError {
+    #[diagnostic(code(directory::get_dir::file), help("check the supplied path"))]
+    #[error("expected directory, but file found")]
+    UnexpectedFile,
+    #[error("internal error getting node")]
+    Get(#[from] GetError),
 }
 
-// GetNode
+impl<D, F> Directory<D, F>
+where
+    D: DirectoryData,
+    F: FileData,
+{
+    pub async fn get_dir(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<Option<Directory<D, F>>, GetDirError> {
+        match self
+            .get_node(path, GetAction::ReturnNone, GetType::Directory)
+            .await
+        {
+            Ok(Some(Node::Directory(dir))) => Ok(Some(dir)),
+            Ok(Some(Node::File(_))) => Err(GetDirError::UnexpectedFile),
+            Ok(None) => Ok(None),
+            Err(err) => Err(GetDirError::Get(err)),
+        }
+    }
+
+    pub async fn get_dir_default(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<Directory<D, F>, GetDirError> {
+        match self
+            .get_node(path, GetAction::CreateDefault, GetType::Directory)
+            .await
+        {
+            Ok(Some(Node::Directory(dir))) => Ok(dir),
+            Ok(Some(Node::File(_))) => Err(GetDirError::UnexpectedFile),
+            Ok(None) => Err(GetDirError::Get(GetError::Other)),
+            Err(err) => Err(GetDirError::Get(err)),
+        }
+    }
+}
+
+#[derive(Debug, Diagnostic, Error)]
+pub enum GetFileError {
+    #[diagnostic(code(directory::get_file::directory), help("check the supplied path"))]
+    #[error("expected file, but directory found")]
+    UnexpectedDirectory,
+    #[error("internal error getting node")]
+    Get(#[from] GetError),
+}
+
+impl<D, F> Directory<D, F>
+where
+    D: DirectoryData,
+    F: FileData,
+{
+    pub async fn get_file(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<Option<File<D, F>>, GetFileError> {
+        match self
+            .get_node(path, GetAction::ReturnNone, GetType::File)
+            .await
+        {
+            Ok(Some(Node::Directory(_))) => Err(GetFileError::UnexpectedDirectory),
+            Ok(Some(Node::File(file))) => Ok(Some(file)),
+            Ok(None) => Ok(None),
+            Err(err) => Err(GetFileError::Get(err)),
+        }
+    }
+
+    pub async fn get_file_default(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<File<D, F>, GetFileError> {
+        match self
+            .get_node(path, GetAction::CreateDefault, GetType::File)
+            .await
+        {
+            Ok(Some(Node::Directory(_))) => Err(GetFileError::UnexpectedDirectory),
+            Ok(Some(Node::File(file))) => Ok(file),
+            Ok(None) => Err(GetFileError::Get(GetError::Other)),
+            Err(err) => Err(GetFileError::Get(err)),
+        }
+    }
+}
 
 impl<D, F> Directory<D, F>
 where
@@ -399,8 +402,9 @@ where
     async fn get_node(
         &self,
         path: impl AsRef<Path>,
-        options: GetNodeOptions,
-    ) -> GetNodeResult<Node<D, F>> {
+        get_action: GetAction,
+        get_type: GetType,
+    ) -> Result<Option<Node<D, F>>, GetError> {
         let mut current = Some(Node::Directory(self.clone()));
         let mut components = path.as_ref().components().peekable();
 
@@ -408,18 +412,19 @@ where
             match current.as_ref() {
                 Some(Node::Directory(dir)) => match component {
                     Component::CurDir => {}
-                    Component::Prefix(_) => return Err(GetNodeError::UnexpectedPrefix),
+                    Component::Prefix(_) => return Err(GetError::UnexpectedPrefix),
                     Component::RootDir => current = dir.get_node_root().await?,
                     Component::ParentDir => current = dir.get_node_parent().await?,
                     Component::Normal(name) => {
                         let name = String::from(name.to_string_lossy());
-                        let position = GetNormalPosition::from_next(components.peek());
-                        let options = GetNormalOptions::create(options.clone(), name, position);
+                        let get_position = GetPosition::from_next(components.peek());
 
-                        current = dir.get_normal(options).await?
+                        current = dir
+                            .get_node_named(name, get_position, get_action, get_type)
+                            .await?
                     }
                 },
-                Some(Node::File(_)) => return Err(GetNodeError::UnexpectedFile),
+                Some(Node::File(_)) => return Err(GetError::UnexpectedFile),
                 _ => return Ok(None),
             }
         }
@@ -427,88 +432,72 @@ where
         Ok(current)
     }
 
-    async fn get_node_root(&self) -> GetNodeResult<Node<D, F>> {
+    async fn get_node_root(&self) -> Result<Option<Node<D, F>>, GetError> {
         match self.is_root().await {
             true => Ok(Some(Node::Directory(self.clone()))),
-            _ => Err(GetNodeError::UnexpectedRoot),
+            _ => Err(GetError::UnexpectedRoot),
         }
     }
 
-    async fn get_node_parent(&self) -> GetNodeResult<Node<D, F>> {
+    async fn get_node_parent(&self) -> Result<Option<Node<D, F>>, GetError> {
         match self.parent().await {
             Some(parent) => Ok(Some(Node::Directory(parent))),
-            _ => Err(GetNodeError::UnexpectedOrphan),
+            _ => Err(GetError::UnexpectedOrphan),
         }
     }
-}
 
-// GetNormalOptions
-
-#[derive(Clone, Debug)]
-struct GetNormalOptions {
-    node: GetNodeOptions,
-    name: String,
-    position: GetNormalPosition,
-}
-
-impl GetNormalOptions {
-    fn create(node: GetNodeOptions, name: String, position: GetNormalPosition) -> Self {
-        Self {
-            node,
-            name,
-            position,
-        }
-    }
-}
-
-// GetNormalPosition
-
-#[derive(Clone, Debug)]
-enum GetNormalPosition {
-    Endpoint,
-    Intermediate,
-}
-
-impl GetNormalPosition {
-    fn from_next(component: Option<&Component>) -> Self {
-        match component {
-            Some(_) => Self::Intermediate,
-            _ => Self::Endpoint,
-        }
-    }
-}
-
-// GetNormal
-
-impl<D, F> Directory<D, F>
-where
-    D: DirectoryData,
-    F: FileData,
-{
-    async fn get_normal(&self, options: GetNormalOptions) -> GetNodeResult<Node<D, F>> {
-        match self.get_normal_child(&options.name).await {
+    async fn get_node_named(
+        &self,
+        name: String,
+        get_position: GetPosition,
+        get_action: GetAction,
+        get_type: GetType,
+    ) -> Result<Option<Node<D, F>>, GetError> {
+        match self.get_node_named_child(&name).await {
             Some(node) => Ok(Some(node)),
-            _ => match options.position {
-                GetNormalPosition::Endpoint => self.get_normal_end(options).await,
-                GetNormalPosition::Intermediate => self.get_normal_inter(options).await,
+            _ => match get_position {
+                GetPosition::Child => {
+                    self.get_node_named_chid_action(name, get_action, get_type)
+                        .await
+                }
+                GetPosition::Parent => {
+                    self.get_node_named_chid_action(name, get_action, GetType::Directory)
+                        .await
+                }
             },
         }
     }
 
-    async fn get_normal_child(&self, name: &str) -> Option<Node<D, F>> {
+    async fn get_node_named_child(&self, name: &str) -> Option<Node<D, F>> {
         self.read(|dir| dir.children.get(name).map(Clone::clone))
             .await
     }
 
-    async fn get_normal_inter(&self, options: GetNormalOptions) -> GetNodeResult<Node<D, F>> {
-        match options.node.get.intermediate {
-            GetIntermediateAction::ReturnError => Err(GetNodeError::IntermediateNotFound),
-            GetIntermediateAction::ReturnNone => Ok(None),
-            GetIntermediateAction::CreateDefault => {
+    async fn get_node_named_chid_action(
+        &self,
+        name: String,
+        get_action: GetAction,
+        get_type: GetType,
+    ) -> Result<Option<Node<D, F>>, GetError> {
+        match get_action {
+            GetAction::CreateDefault => {
                 self.write(|mut dir| {
-                    let parent = Some((options.name.clone(), dir.weak.clone()));
-                    let node = Node::Directory(Directory::create(None, parent));
-                    let node = match dir.children.try_insert(options.name, node) {
+                    let parent = (name.clone(), dir.weak.clone());
+                    let node = match get_type {
+                        GetType::Directory => {
+                            let dir = Directory::create(None, Some(parent));
+                            let node = Node::Directory(dir);
+
+                            node
+                        }
+                        GetType::File => {
+                            let file = File::create(None, parent);
+                            let node = Node::File(file);
+
+                            node
+                        }
+                    };
+                    let node = match dir.children.try_insert(name, node) {
                         Ok(node) => node.clone(),
                         Err(err) => err.entry.get().clone(),
                     };
@@ -517,28 +506,7 @@ where
                 })
                 .await
             }
-        }
-    }
-
-    async fn get_normal_end(&self, options: GetNormalOptions) -> GetNodeResult<Node<D, F>> {
-        match options.node.get.endpoint {
-            GetEndpointAction::ReturnError => Err(GetNodeError::EndpointNotFound),
-            GetEndpointAction::ReturnNone => Ok(None),
-            GetEndpointAction::CreateDefault => {
-                self.write(|mut dir| {
-                    // TODO: We've assumed a file here. It doesn't have to be...
-
-                    let parent = (options.name.clone(), dir.weak.clone());
-                    let node = Node::File(File::create(None, parent));
-                    let node = match dir.children.try_insert(options.name, node) {
-                        Ok(node) => node.clone(),
-                        Err(err) => err.entry.get().clone(),
-                    };
-
-                    Ok(Some(node))
-                })
-                .await
-            }
+            GetAction::ReturnNone => Ok(None),
         }
     }
 }

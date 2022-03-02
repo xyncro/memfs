@@ -11,3 +11,6 @@ futures-util = "0.3"
 miette = { version = "4.2", features = ["fancy"] }
 thiserror = "1.0"
 tokio = { version = "1.17", features = ["full"] }
+
+[dev-dependencies]
+anyhow = "1.0"
