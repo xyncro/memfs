@@ -5,8 +5,11 @@ use futures_util::FutureExt;
 use tokio::sync::{
     RwLock as Lock,
     RwLockReadGuard as Read,
+    RwLockWriteGuard as Write,
 };
 
+#[cfg(doc)]
+use crate::FileSystem;
 use crate::{
     directory::DirectoryWeak,
     Child,
@@ -16,14 +19,8 @@ use crate::{
 };
 
 // =============================================================================
-
-// FileData
-
-pub trait FileData = Default + Send + Sync;
-
-// =============================================================================
-
 // File
+// =============================================================================
 
 #[derive(Debug)]
 pub struct File<D, F>(pub(crate) Arc<Lock<FileInternal<D, F>>>)
@@ -32,8 +29,8 @@ where
     F: FileData;
 
 // -----------------------------------------------------------------------------
-
-// File - Trait Implementations
+// File - Traits
+// -----------------------------------------------------------------------------
 
 impl<D, F> Clone for File<D, F>
 where
@@ -52,7 +49,7 @@ where
     F: FileData,
 {
     async fn name(&self) -> Option<String> {
-        self.read_lock(|file| Some(file.parent.0.clone())).await
+        self.read(|file| Some(file.parent.0.clone())).await
     }
 }
 
@@ -63,7 +60,7 @@ where
     F: FileData,
 {
     async fn parent(&self) -> Option<Directory<D, F>> {
-        self.read_lock(|file| file.parent.1.clone())
+        self.read(|file| file.parent.1.clone())
             .map(|DirectoryWeak(parent)| parent.upgrade())
             .map(|parent| parent.map(Directory))
             .await
@@ -71,22 +68,27 @@ where
 }
 
 // -----------------------------------------------------------------------------
+// File - Methods
+// -----------------------------------------------------------------------------
 
-// File - Read/Write (Internal)
+// File - Methods - Read & Write
 
 impl<D, F> File<D, F>
 where
     D: DirectoryData,
     F: FileData,
 {
-    async fn read_lock<T>(&self, f: impl FnOnce(Read<FileInternal<D, F>>) -> T) -> T {
+    async fn read<T>(&self, f: impl FnOnce(Read<'_, FileInternal<D, F>>) -> T) -> T {
         self.0.read().map(f).await
+    }
+
+    #[allow(dead_code)] // TODO: Remove when used
+    async fn write<T>(&self, f: impl FnOnce(Write<'_, FileInternal<D, F>>) -> T) -> T {
+        self.0.write().map(f).await
     }
 }
 
-// -----------------------------------------------------------------------------
-
-// File - Create
+// File - Methods - Create
 
 impl<D, F> File<D, F>
 where
@@ -102,15 +104,21 @@ where
 }
 
 // =============================================================================
-
 // FileInternal
+// =============================================================================
 
 #[derive(Debug)]
-pub struct FileInternal<D, F>
+pub(crate) struct FileInternal<D, F>
 where
     D: DirectoryData,
     F: FileData,
 {
-    pub(crate) _data: F,
-    pub(crate) parent: (String, DirectoryWeak<D, F>),
+    _data: F,
+    parent: (String, DirectoryWeak<D, F>),
 }
+
+// =============================================================================
+// FileData
+// =============================================================================
+
+pub trait FileData = Default + Send + Sync;

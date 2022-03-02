@@ -20,6 +20,8 @@ use tokio::sync::{
     RwLockWriteGuard as Write,
 };
 
+#[cfg(doc)]
+use crate::FileSystem;
 use crate::{
     Child,
     File,
@@ -30,14 +32,8 @@ use crate::{
 };
 
 // =============================================================================
-
-// DirectoryData
-
-pub trait DirectoryData = Default + Send + Sync;
-
-// =============================================================================
-
 // Directory
+// =============================================================================
 
 #[derive(Debug)]
 pub struct Directory<D, F>(pub(crate) Arc<Lock<DirectoryInternal<D, F>>>)
@@ -46,8 +42,8 @@ where
     F: FileData;
 
 // -----------------------------------------------------------------------------
-
 // Directory - Traits
+// -----------------------------------------------------------------------------
 
 impl<D, F> Clone for Directory<D, F>
 where
@@ -97,26 +93,26 @@ where
 }
 
 // -----------------------------------------------------------------------------
+// Directory - Methods
+// -----------------------------------------------------------------------------
 
-// Directory - Read & Write
+// Directory - Methods - Read & Write
 
 impl<D, F> Directory<D, F>
 where
     D: DirectoryData,
     F: FileData,
 {
-    async fn read<T>(&self, f: impl FnOnce(Read<DirectoryInternal<D, F>>) -> T) -> T {
+    async fn read<T>(&self, f: impl FnOnce(Read<'_, DirectoryInternal<D, F>>) -> T) -> T {
         self.0.read().map(f).await
     }
 
-    async fn write<T>(&self, f: impl FnOnce(Write<DirectoryInternal<D, F>>) -> T) -> T {
+    async fn write<T>(&self, f: impl FnOnce(Write<'_, DirectoryInternal<D, F>>) -> T) -> T {
         self.0.write().map(f).await
     }
 }
 
-// -----------------------------------------------------------------------------
-
-// Directory - Create
+// Directory - Methods - Create
 
 impl<D, F> Directory<D, F>
 where
@@ -153,9 +149,7 @@ mod create_tests {
     }
 }
 
-// -----------------------------------------------------------------------------
-
-// Directory - Count
+// Directory - Methods - Count
 
 impl<D, F> Directory<D, F>
 where
@@ -207,9 +201,7 @@ mod count_tests {
     }
 }
 
-// -----------------------------------------------------------------------------
-
-// Directory - Get
+// Directory - Methods - Get
 
 #[derive(Clone, Copy, Debug)]
 pub enum GetType {
@@ -242,7 +234,7 @@ enum GetPosition {
 }
 
 impl GetPosition {
-    fn from_next(component: Option<&Component>) -> Self {
+    fn from_next(component: Option<&Component<'_>>) -> Self {
         match component {
             Some(_) => Self::Parent,
             _ => Self::Child,
@@ -250,7 +242,7 @@ impl GetPosition {
     }
 }
 
-#[derive(Debug, Diagnostic, Error)]
+#[derive(Clone, Copy, Debug, Diagnostic, Error)]
 pub enum GetError {
     #[diagnostic(code(directory::get::file), help("check the supplied path"))]
     #[error("path indicated a directory, but a file was found")]
@@ -304,7 +296,9 @@ where
     }
 }
 
-#[derive(Debug, Diagnostic, Error)]
+// Directory - Methods - GetDir
+
+#[derive(Clone, Copy, Debug, Diagnostic, Error)]
 pub enum GetDirError {
     #[diagnostic(code(directory::get_dir::file), help("check the supplied path"))]
     #[error("expected directory, but file found")]
@@ -349,7 +343,9 @@ where
     }
 }
 
-#[derive(Debug, Diagnostic, Error)]
+// Directory - Methods - GetFile
+
+#[derive(Clone, Copy, Debug, Diagnostic, Error)]
 pub enum GetFileError {
     #[diagnostic(code(directory::get_file::directory), help("check the supplied path"))]
     #[error("expected file, but directory found")]
@@ -393,6 +389,8 @@ where
         }
     }
 }
+
+// Directory - Methods - GetNode
 
 impl<D, F> Directory<D, F>
 where
@@ -457,11 +455,11 @@ where
             Some(node) => Ok(Some(node)),
             _ => match get_position {
                 GetPosition::Child => {
-                    self.get_node_named_chid_action(name, get_action, get_type)
+                    self.get_node_named_child_action(name, get_action, get_type)
                         .await
                 }
                 GetPosition::Parent => {
-                    self.get_node_named_chid_action(name, get_action, GetType::Directory)
+                    self.get_node_named_child_action(name, get_action, GetType::Directory)
                         .await
                 }
             },
@@ -473,7 +471,7 @@ where
             .await
     }
 
-    async fn get_node_named_chid_action(
+    async fn get_node_named_child_action(
         &self,
         name: String,
         get_action: GetAction,
@@ -512,18 +510,18 @@ where
 }
 
 // =============================================================================
-
 // DirectoryWeak
+// =============================================================================
 
 #[derive(Debug)]
-pub struct DirectoryWeak<D, F>(pub Weak<Lock<DirectoryInternal<D, F>>>)
+pub(crate) struct DirectoryWeak<D, F>(pub(crate) Weak<Lock<DirectoryInternal<D, F>>>)
 where
     D: DirectoryData,
     F: FileData;
 
 // -----------------------------------------------------------------------------
-
 // DirectoryWeak - Traits
+// -----------------------------------------------------------------------------
 
 impl<D, F> Clone for DirectoryWeak<D, F>
 where
@@ -536,11 +534,11 @@ where
 }
 
 // =============================================================================
-
 // DirectoryInternal
+// =============================================================================
 
 #[derive(Debug)]
-pub struct DirectoryInternal<D, F>
+pub(crate) struct DirectoryInternal<D, F>
 where
     D: DirectoryData,
     F: FileData,
@@ -550,3 +548,9 @@ where
     parent: Option<(String, DirectoryWeak<D, F>)>,
     weak: DirectoryWeak<D, F>,
 }
+
+// =============================================================================
+// DirectoryData
+// =============================================================================
+
+pub trait DirectoryData = Default + Send + Sync;
