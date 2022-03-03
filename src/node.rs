@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 
 use crate::{
-    directory::DirectoryData,
-    file::FileData,
     Child,
     Directory,
+    DirectoryData,
     File,
+    FileData,
     Root,
 };
 
@@ -63,7 +63,7 @@ where
     async fn is_root(&self) -> bool {
         match self {
             Self::Directory(dir) => dir.is_root().await,
-            _ => false,
+            Self::File(_) => false,
         }
     }
 }

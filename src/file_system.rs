@@ -23,6 +23,16 @@ where
 // FileSystem - Traits
 // -----------------------------------------------------------------------------
 
+impl<D, F> Default for FileSystem<D, F>
+where
+    D: DirectoryData,
+    F: FileData,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<D, F> Deref for FileSystem<D, F>
 where
     D: DirectoryData,
@@ -46,6 +56,7 @@ where
     D: DirectoryData,
     F: FileData,
 {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             root: Directory::create_root(),

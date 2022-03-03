@@ -36,9 +36,9 @@ use crate::{
 // =============================================================================
 
 #[derive(Debug)]
-pub struct Directory<D, F>(pub(crate) Arc<Lock<DirectoryInternal<D, F>>>)
+pub struct Directory<D, F>(pub(crate) Arc<Lock<Internal<D, F>>>)
 where
-    D: DirectoryData,
+    D: Data,
     F: FileData;
 
 // -----------------------------------------------------------------------------
@@ -47,7 +47,7 @@ where
 
 impl<D, F> Clone for Directory<D, F>
 where
-    D: DirectoryData,
+    D: Data,
     F: FileData,
 {
     fn clone(&self) -> Self {
@@ -58,7 +58,7 @@ where
 #[async_trait]
 impl<D, F> Name for Directory<D, F>
 where
-    D: DirectoryData,
+    D: Data,
     F: FileData,
 {
     async fn name(&self) -> Option<String> {
@@ -70,12 +70,12 @@ where
 #[async_trait]
 impl<D, F> Child<D, F> for Directory<D, F>
 where
-    D: DirectoryData,
+    D: Data,
     F: FileData,
 {
-    async fn parent(&self) -> Option<Directory<D, F>> {
+    async fn parent(&self) -> Option<Self> {
         self.read(|dir| dir.parent.as_ref().map(|parent| parent.1.clone()))
-            .map(|parent| parent.and_then(|DirectoryWeak(dir)| dir.upgrade()))
+            .map(|parent| parent.and_then(|Reference(dir)| dir.upgrade()))
             .map(|parent| parent.map(Directory))
             .await
     }
@@ -84,7 +84,7 @@ where
 #[async_trait]
 impl<D, F> Root<D, F> for Directory<D, F>
 where
-    D: DirectoryData,
+    D: Data,
     F: FileData,
 {
     async fn is_root(&self) -> bool {
@@ -100,14 +100,20 @@ where
 
 impl<D, F> Directory<D, F>
 where
-    D: DirectoryData,
+    D: Data,
     F: FileData,
 {
-    async fn read<T>(&self, f: impl FnOnce(Read<'_, DirectoryInternal<D, F>>) -> T) -> T {
+    async fn read<T, R>(&self, f: R) -> T
+    where
+        R: FnOnce(Read<'_, Internal<D, F>>) -> T + Send,
+    {
         self.0.read().map(f).await
     }
 
-    async fn write<T>(&self, f: impl FnOnce(Write<'_, DirectoryInternal<D, F>>) -> T) -> T {
+    async fn write<T, W>(&self, f: W) -> T
+    where
+        W: FnOnce(Write<'_, Internal<D, F>>) -> T + Send,
+    {
         self.0.write().map(f).await
     }
 }
@@ -116,16 +122,16 @@ where
 
 impl<D, F> Directory<D, F>
 where
-    D: DirectoryData,
+    D: Data,
     F: FileData,
 {
-    pub(crate) fn create(data: Option<D>, parent: Option<(String, DirectoryWeak<D, F>)>) -> Self {
+    pub(crate) fn create(data: Option<D>, parent: Option<(String, Reference<D, F>)>) -> Self {
         Self(Arc::new_cyclic(|weak| {
-            Lock::new(DirectoryInternal {
-                children: Default::default(),
+            Lock::new(Internal {
+                children: HashMap::default(),
                 _data: data.unwrap_or_default(),
                 parent,
-                weak: DirectoryWeak(weak.clone()),
+                weak: Reference(weak.clone()),
             })
         }))
     }
@@ -153,7 +159,7 @@ mod create_tests {
 
 impl<D, F> Directory<D, F>
 where
-    D: DirectoryData,
+    D: Data,
     F: FileData,
 {
     pub async fn count(&self) -> usize {
@@ -161,22 +167,19 @@ where
     }
 
     pub async fn count_dir(&self) -> usize {
-        self.count_predicate(|child| match child {
-            Node::Directory(_) => true,
-            _ => false,
-        })
-        .await
+        self.count_predicate(|child| matches!(child, Node::Directory(_)))
+            .await
     }
 
     pub async fn count_file(&self) -> usize {
-        self.count_predicate(|child| match child {
-            Node::File(_) => true,
-            _ => false,
-        })
-        .await
+        self.count_predicate(|child| matches!(child, Node::File(_)))
+            .await
     }
 
-    async fn count_predicate(&self, predicate: impl Fn(&Node<D, F>) -> bool) -> usize {
+    async fn count_predicate<P>(&self, predicate: P) -> usize
+    where
+        P: Fn(&Node<D, F>) -> bool + Send + Sync,
+    {
         self.read(|dir| {
             dir.children
                 .values()
@@ -234,7 +237,7 @@ enum GetPosition {
 }
 
 impl GetPosition {
-    fn from_next(component: Option<&Component<'_>>) -> Self {
+    const fn from_next(component: Option<&Component<'_>>) -> Self {
         match component {
             Some(_) => Self::Parent,
             _ => Self::Child,
@@ -269,22 +272,20 @@ pub enum GetError {
 
 impl<D, F> Directory<D, F>
 where
-    D: DirectoryData,
+    D: Data,
     F: FileData,
 {
-    pub async fn get(
-        &self,
-        path: impl AsRef<Path>,
-        get_type: GetType,
-    ) -> Result<Option<Node<D, F>>, GetError> {
+    pub async fn get<P>(&self, path: P, get_type: GetType) -> Result<Option<Node<D, F>>, GetError>
+    where
+        P: AsRef<Path> + Send,
+    {
         self.get_node(path, GetAction::ReturnNone, get_type).await
     }
 
-    pub async fn get_default(
-        &self,
-        path: impl AsRef<Path>,
-        get_type: GetType,
-    ) -> Result<Node<D, F>, GetError> {
+    pub async fn get_default<P>(&self, path: P, get_type: GetType) -> Result<Node<D, F>, GetError>
+    where
+        P: AsRef<Path> + Send,
+    {
         match self
             .get_node(path, GetAction::CreateDefault, get_type)
             .await
@@ -309,13 +310,13 @@ pub enum GetDirError {
 
 impl<D, F> Directory<D, F>
 where
-    D: DirectoryData,
+    D: Data,
     F: FileData,
 {
-    pub async fn get_dir(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Result<Option<Directory<D, F>>, GetDirError> {
+    pub async fn get_dir<P>(&self, path: P) -> Result<Option<Self>, GetDirError>
+    where
+        P: AsRef<Path> + Send,
+    {
         match self
             .get_node(path, GetAction::ReturnNone, GetType::Directory)
             .await
@@ -327,10 +328,10 @@ where
         }
     }
 
-    pub async fn get_dir_default(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Result<Directory<D, F>, GetDirError> {
+    pub async fn get_dir_default<P>(&self, path: P) -> Result<Self, GetDirError>
+    where
+        P: AsRef<Path> + Send,
+    {
         match self
             .get_node(path, GetAction::CreateDefault, GetType::Directory)
             .await
@@ -356,13 +357,13 @@ pub enum GetFileError {
 
 impl<D, F> Directory<D, F>
 where
-    D: DirectoryData,
+    D: Data,
     F: FileData,
 {
-    pub async fn get_file(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Result<Option<File<D, F>>, GetFileError> {
+    pub async fn get_file<P>(&self, path: P) -> Result<Option<File<D, F>>, GetFileError>
+    where
+        P: AsRef<Path> + Send,
+    {
         match self
             .get_node(path, GetAction::ReturnNone, GetType::File)
             .await
@@ -374,10 +375,10 @@ where
         }
     }
 
-    pub async fn get_file_default(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Result<File<D, F>, GetFileError> {
+    pub async fn get_file_default<P>(&self, path: P) -> Result<File<D, F>, GetFileError>
+    where
+        P: AsRef<Path> + Send,
+    {
         match self
             .get_node(path, GetAction::CreateDefault, GetType::File)
             .await
@@ -394,15 +395,18 @@ where
 
 impl<D, F> Directory<D, F>
 where
-    D: DirectoryData,
+    D: Data,
     F: FileData,
 {
-    async fn get_node(
+    async fn get_node<P>(
         &self,
-        path: impl AsRef<Path>,
+        path: P,
         get_action: GetAction,
         get_type: GetType,
-    ) -> Result<Option<Node<D, F>>, GetError> {
+    ) -> Result<Option<Node<D, F>>, GetError>
+    where
+        P: AsRef<Path> + Send,
+    {
         let mut current = Some(Node::Directory(self.clone()));
         let mut components = path.as_ref().components().peekable();
 
@@ -419,7 +423,7 @@ where
 
                         current = dir
                             .get_node_named(name, get_position, get_action, get_type)
-                            .await?
+                            .await?;
                     }
                 },
                 Some(Node::File(_)) => return Err(GetError::UnexpectedFile),
@@ -430,6 +434,7 @@ where
         Ok(current)
     }
 
+    #[allow(clippy::match_bool)]
     async fn get_node_root(&self) -> Result<Option<Node<D, F>>, GetError> {
         match self.is_root().await {
             true => Ok(Some(Node::Directory(self.clone()))),
@@ -483,16 +488,12 @@ where
                     let parent = (name.clone(), dir.weak.clone());
                     let node = match get_type {
                         GetType::Directory => {
-                            let dir = Directory::create(None, Some(parent));
-                            let node = Node::Directory(dir);
-
-                            node
+                            let dir = Self::create(None, Some(parent));
+                            Node::Directory(dir)
                         }
                         GetType::File => {
                             let file = File::create(None, parent);
-                            let node = Node::File(file);
-
-                            node
+                            Node::File(file)
                         }
                     };
                     let node = match dir.children.try_insert(name, node) {
@@ -510,22 +511,22 @@ where
 }
 
 // =============================================================================
-// DirectoryWeak
+// Reference
 // =============================================================================
 
 #[derive(Debug)]
-pub(crate) struct DirectoryWeak<D, F>(pub(crate) Weak<Lock<DirectoryInternal<D, F>>>)
+pub struct Reference<D, F>(pub(crate) Weak<Lock<Internal<D, F>>>)
 where
-    D: DirectoryData,
+    D: Data,
     F: FileData;
 
 // -----------------------------------------------------------------------------
-// DirectoryWeak - Traits
+// Reference - Traits
 // -----------------------------------------------------------------------------
 
-impl<D, F> Clone for DirectoryWeak<D, F>
+impl<D, F> Clone for Reference<D, F>
 where
-    D: DirectoryData,
+    D: Data,
     F: FileData,
 {
     fn clone(&self) -> Self {
@@ -534,23 +535,23 @@ where
 }
 
 // =============================================================================
-// DirectoryInternal
+// Internal
 // =============================================================================
 
 #[derive(Debug)]
-pub(crate) struct DirectoryInternal<D, F>
+pub struct Internal<D, F>
 where
-    D: DirectoryData,
+    D: Data,
     F: FileData,
 {
     children: HashMap<String, Node<D, F>>,
     _data: D,
-    parent: Option<(String, DirectoryWeak<D, F>)>,
-    weak: DirectoryWeak<D, F>,
+    parent: Option<(String, Reference<D, F>)>,
+    weak: Reference<D, F>,
 }
 
 // =============================================================================
-// DirectoryData
+// Data
 // =============================================================================
 
-pub trait DirectoryData = Default + Send + Sync;
+pub trait Data = Default + Send + Sync;

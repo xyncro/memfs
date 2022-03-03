@@ -1,7 +1,10 @@
 [package]
 name = "memfs"
-description = "An in-memory filesystem-like structure with parameterised nodes for files and directories"
+description = "An in-memory, async, filesystem-like structure with parameterised nodes for file and directory data"
 license = "MIT"
+categories = ["asynchronous", "data-structures", "filesystem"]
+keywords = ["directory", "file", "filesystem", "memory", "virtual"]
+repository = "https://github.com/xyncro/memfs"
 version = "0.1.0"
 edition = "2021"
 

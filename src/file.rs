@@ -11,7 +11,7 @@ use tokio::sync::{
 #[cfg(doc)]
 use crate::FileSystem;
 use crate::{
-    directory::DirectoryWeak,
+    directory::Reference,
     Child,
     Directory,
     DirectoryData,
@@ -23,10 +23,10 @@ use crate::{
 // =============================================================================
 
 #[derive(Debug)]
-pub struct File<D, F>(pub(crate) Arc<Lock<FileInternal<D, F>>>)
+pub struct File<D, F>(pub(crate) Arc<Lock<Internal<D, F>>>)
 where
     D: DirectoryData,
-    F: FileData;
+    F: Data;
 
 // -----------------------------------------------------------------------------
 // File - Traits
@@ -35,7 +35,7 @@ where
 impl<D, F> Clone for File<D, F>
 where
     D: DirectoryData,
-    F: FileData,
+    F: Data,
 {
     fn clone(&self) -> Self {
         Self(self.0.clone())
@@ -46,7 +46,7 @@ where
 impl<D, F> Name for File<D, F>
 where
     D: DirectoryData,
-    F: FileData,
+    F: Data,
 {
     async fn name(&self) -> Option<String> {
         self.read(|file| Some(file.parent.0.clone())).await
@@ -57,11 +57,11 @@ where
 impl<D, F> Child<D, F> for File<D, F>
 where
     D: DirectoryData,
-    F: FileData,
+    F: Data,
 {
     async fn parent(&self) -> Option<Directory<D, F>> {
         self.read(|file| file.parent.1.clone())
-            .map(|DirectoryWeak(parent)| parent.upgrade())
+            .map(|Reference(parent)| parent.upgrade())
             .map(|parent| parent.map(Directory))
             .await
     }
@@ -76,14 +76,20 @@ where
 impl<D, F> File<D, F>
 where
     D: DirectoryData,
-    F: FileData,
+    F: Data,
 {
-    async fn read<T>(&self, f: impl FnOnce(Read<'_, FileInternal<D, F>>) -> T) -> T {
+    async fn read<T, R>(&self, f: R) -> T
+    where
+        R: FnOnce(Read<'_, Internal<D, F>>) -> T + Send,
+    {
         self.0.read().map(f).await
     }
 
     #[allow(dead_code)] // TODO: Remove when used
-    async fn write<T>(&self, f: impl FnOnce(Write<'_, FileInternal<D, F>>) -> T) -> T {
+    async fn write<T, W>(&self, f: W) -> T
+    where
+        W: FnOnce(Write<'_, Internal<D, F>>) -> T + Send,
+    {
         self.0.write().map(f).await
     }
 }
@@ -93,10 +99,10 @@ where
 impl<D, F> File<D, F>
 where
     D: DirectoryData,
-    F: FileData,
+    F: Data,
 {
-    pub(crate) fn create(data: Option<F>, parent: (String, DirectoryWeak<D, F>)) -> Self {
-        Self(Arc::new(Lock::new(FileInternal {
+    pub(crate) fn create(data: Option<F>, parent: (String, Reference<D, F>)) -> Self {
+        Self(Arc::new(Lock::new(Internal {
             _data: data.unwrap_or_default(),
             parent,
         })))
@@ -104,21 +110,21 @@ where
 }
 
 // =============================================================================
-// FileInternal
+// Internal
 // =============================================================================
 
 #[derive(Debug)]
-pub(crate) struct FileInternal<D, F>
+pub struct Internal<D, F>
 where
     D: DirectoryData,
-    F: FileData,
+    F: Data,
 {
     _data: F,
-    parent: (String, DirectoryWeak<D, F>),
+    parent: (String, Reference<D, F>),
 }
 
 // =============================================================================
-// FileData
+// Data
 // =============================================================================
 
-pub trait FileData = Default + Send + Sync;
+pub trait Data = Default + Send + Sync;
