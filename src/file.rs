@@ -8,8 +8,6 @@ use tokio::sync::{
     RwLockWriteGuard as Write,
 };
 
-#[cfg(doc)]
-use crate::FileSystem;
 use crate::{
     directory::Reference,
     Child,
