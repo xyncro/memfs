@@ -99,6 +99,7 @@ where
     D: DirectoryData,
     F: Data,
 {
+    #[must_use]
     pub(crate) fn create(data: Option<F>, parent: (String, Reference<D, F>)) -> Self {
         Self(Arc::new(RwLock::new(Internal {
             _data: data.unwrap_or_default(),

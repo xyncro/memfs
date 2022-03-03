@@ -123,6 +123,7 @@ where
     D: Data,
     F: FileData,
 {
+    #[must_use]
     pub(crate) fn create(data: Option<D>, parent: Option<(String, Reference<D, F>)>) -> Self {
         Self(Arc::new_cyclic(|weak| {
             RwLock::new(Internal {
@@ -134,6 +135,7 @@ where
         }))
     }
 
+    #[must_use]
     pub(crate) fn create_root() -> Self {
         Self::create(None, None)
     }
