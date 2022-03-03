@@ -1,10 +1,48 @@
 use std::ops::Deref;
 
+use async_trait::async_trait;
+
 use crate::{
     Directory,
-    DirectoryData,
-    FileData,
+    ValueType,
 };
+
+// =============================================================================
+// Child/Parent/Root
+// =============================================================================
+
+#[async_trait]
+pub trait Child<D, F> {
+    async fn parent(&self) -> Option<Directory<D, F>>
+    where
+        D: ValueType,
+        F: ValueType;
+}
+
+// #[async_trait]
+// pub trait Parent<D, F> {
+//     async fn children(&self) -> &HashMap<String, Node<D, F>>
+//     where
+//         D: ValueType,
+//         F: ValueType;
+// }
+
+#[async_trait]
+pub trait Root<D, F> {
+    async fn is_root(&self) -> bool
+    where
+        D: ValueType,
+        F: ValueType;
+}
+
+// =============================================================================
+// Name
+// =============================================================================
+
+#[async_trait]
+pub trait Name {
+    async fn name(&self) -> Option<String>;
+}
 
 // =============================================================================
 // FileSystem
@@ -13,8 +51,8 @@ use crate::{
 #[derive(Debug)]
 pub struct FileSystem<D, F>
 where
-    D: DirectoryData,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     root: Directory<D, F>,
 }
@@ -25,8 +63,8 @@ where
 
 impl<D, F> Default for FileSystem<D, F>
 where
-    D: DirectoryData,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     fn default() -> Self {
         Self::new()
@@ -35,8 +73,8 @@ where
 
 impl<D, F> Deref for FileSystem<D, F>
 where
-    D: DirectoryData,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     type Target = Directory<D, F>;
 
@@ -53,8 +91,8 @@ where
 
 impl<D, F> FileSystem<D, F>
 where
-    D: DirectoryData,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     #[must_use]
     pub fn new() -> Self {

@@ -3,10 +3,9 @@ use async_trait::async_trait;
 use crate::{
     Child,
     Directory,
-    DirectoryData,
     File,
-    FileData,
     Root,
+    ValueType,
 };
 
 // =============================================================================
@@ -16,8 +15,8 @@ use crate::{
 #[derive(Debug)]
 pub enum Node<D, F>
 where
-    D: DirectoryData,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     Directory(Directory<D, F>),
     File(File<D, F>),
@@ -29,8 +28,8 @@ where
 
 impl<D, F> Clone for Node<D, F>
 where
-    D: DirectoryData,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     fn clone(&self) -> Self {
         match &self {
@@ -43,8 +42,8 @@ where
 #[async_trait]
 impl<D, F> Child<D, F> for Node<D, F>
 where
-    D: DirectoryData,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     async fn parent(&self) -> Option<Directory<D, F>> {
         match self {
@@ -57,8 +56,8 @@ where
 #[async_trait]
 impl<D, F> Root<D, F> for Node<D, F>
 where
-    D: DirectoryData,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     async fn is_root(&self) -> bool {
         match self {

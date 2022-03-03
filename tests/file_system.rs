@@ -1,4 +1,8 @@
-use memfs::FileSystem;
+use anyhow::Result;
+use memfs::{
+    DataExt,
+    FileSystem,
+};
 
 #[tokio::test]
 async fn empty_fs() {
@@ -8,20 +12,24 @@ async fn empty_fs() {
 }
 
 #[tokio::test]
-async fn get() {
+async fn get() -> Result<()> {
     let fs: FileSystem<u32, u32> = FileSystem::new();
+    let file = fs.get_file_default("/test_1/test_2").await?;
 
-    let endpoint = fs.get_file_default("/test_1/test_2").await;
+    let value = file.read(|value| *value).await;
+    assert_eq!(value, 0);
 
-    match endpoint {
-        Ok(_) => assert!(true),
-        _ => assert!(false),
-    }
+    file.write(|mut value| *value += 1).await;
 
-    let intermediate = fs.get_dir("/test_1").await;
+    let value = file.read(|value| *value).await;
+    assert_eq!(value, 1);
+
+    let intermediate = fs.get_dir("/test_1").await?;
 
     match intermediate {
-        Ok(Some(_)) => assert!(true),
+        Some(_) => assert!(true),
         _ => assert!(false),
     }
+
+    Ok(())
 }

@@ -10,23 +10,25 @@ use std::{
     },
 };
 
-use async_trait::async_trait;
-use futures_util::FutureExt;
-use miette::Diagnostic;
-use thiserror::Error;
-use tokio::sync::{
+use async_lock::{
     RwLock,
     RwLockReadGuard,
     RwLockWriteGuard,
 };
+use async_trait::async_trait;
+use futures::FutureExt;
+use miette::Diagnostic;
+use thiserror::Error;
 
 use crate::{
     Child,
+    Data,
     File,
-    FileData,
     Name,
     Node,
     Root,
+    Value,
+    ValueType,
 };
 
 // =============================================================================
@@ -36,8 +38,8 @@ use crate::{
 #[derive(Debug)]
 pub struct Directory<D, F>(pub(crate) Arc<RwLock<Internal<D, F>>>)
 where
-    D: Data,
-    F: FileData;
+    D: ValueType,
+    F: ValueType;
 
 // -----------------------------------------------------------------------------
 // Directory - Traits
@@ -45,8 +47,8 @@ where
 
 impl<D, F> Clone for Directory<D, F>
 where
-    D: Data,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     fn clone(&self) -> Self {
         Self(self.0.clone())
@@ -54,10 +56,33 @@ where
 }
 
 #[async_trait]
+impl<D, F> Child<D, F> for Directory<D, F>
+where
+    D: ValueType,
+    F: ValueType,
+{
+    async fn parent(&self) -> Option<Self> {
+        self.read(|dir| dir.parent.as_ref().and_then(|parent| parent.1.upgrade()))
+            .await
+    }
+}
+
+#[async_trait]
+impl<D, F> Data<D> for Directory<D, F>
+where
+    D: ValueType,
+    F: ValueType,
+{
+    async fn data(&self) -> Value<D> {
+        self.read(|dir| dir.value.clone()).await
+    }
+}
+
+#[async_trait]
 impl<D, F> Name for Directory<D, F>
 where
-    D: Data,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     async fn name(&self) -> Option<String> {
         self.read(|dir| dir.parent.as_ref().map(|parent| parent.0.clone()))
@@ -66,24 +91,10 @@ where
 }
 
 #[async_trait]
-impl<D, F> Child<D, F> for Directory<D, F>
-where
-    D: Data,
-    F: FileData,
-{
-    async fn parent(&self) -> Option<Self> {
-        self.read(|dir| dir.parent.as_ref().map(|parent| parent.1.clone()))
-            .map(|parent| parent.and_then(|Reference(dir)| dir.upgrade()))
-            .map(|parent| parent.map(Directory))
-            .await
-    }
-}
-
-#[async_trait]
 impl<D, F> Root<D, F> for Directory<D, F>
 where
-    D: Data,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     async fn is_root(&self) -> bool {
         self.read(|dir| dir.parent.is_none()).await
@@ -98,8 +109,8 @@ where
 
 impl<D, F> Directory<D, F>
 where
-    D: Data,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     async fn read<T, R>(&self, f: R) -> T
     where
@@ -120,16 +131,16 @@ where
 
 impl<D, F> Directory<D, F>
 where
-    D: Data,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     #[must_use]
-    pub(crate) fn create(data: Option<D>, parent: Option<(String, Reference<D, F>)>) -> Self {
+    pub(crate) fn create(value: Option<D>, parent: Option<(String, Reference<D, F>)>) -> Self {
         Self(Arc::new_cyclic(|weak| {
             RwLock::new(Internal {
                 children: HashMap::default(),
-                _data: data.unwrap_or_default(),
                 parent,
+                value: Value::from_option(value),
                 weak: Reference(weak.clone()),
             })
         }))
@@ -150,7 +161,6 @@ mod create_tests {
         let dir: Directory<(), ()> = Directory::create_root();
 
         assert_eq!(dir.read(|dir| dir.children.len()).await, 0);
-        assert_eq!(dir.read(|dir| dir._data).await, Default::default());
         assert_eq!(dir.read(|dir| dir.parent.is_none()).await, true);
     }
 }
@@ -159,8 +169,8 @@ mod create_tests {
 
 impl<D, F> Directory<D, F>
 where
-    D: Data,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     pub async fn count(&self) -> usize {
         self.read(|dir| dir.children.len()).await
@@ -293,8 +303,8 @@ pub enum GetError {
 
 impl<D, F> Directory<D, F>
 where
-    D: Data,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     pub async fn get<P>(&self, path: P, get_type: GetType) -> Result<Option<Node<D, F>>, GetError>
     where
@@ -338,8 +348,8 @@ pub enum GetDirError {
 
 impl<D, F> Directory<D, F>
 where
-    D: Data,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     pub async fn get_dir<P>(&self, path: P) -> Result<Option<Self>, GetDirError>
     where
@@ -392,8 +402,8 @@ pub enum GetFileError {
 
 impl<D, F> Directory<D, F>
 where
-    D: Data,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     pub async fn get_file<P>(&self, path: P) -> Result<Option<File<D, F>>, GetFileError>
     where
@@ -430,8 +440,8 @@ where
 
 impl<D, F> Directory<D, F>
 where
-    D: Data,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     async fn get_node<P>(
         &self,
@@ -552,8 +562,8 @@ where
 #[derive(Debug)]
 pub struct Reference<D, F>(pub(crate) Weak<RwLock<Internal<D, F>>>)
 where
-    D: Data,
-    F: FileData;
+    D: ValueType,
+    F: ValueType;
 
 // -----------------------------------------------------------------------------
 // Reference - Traits
@@ -561,11 +571,25 @@ where
 
 impl<D, F> Clone for Reference<D, F>
 where
-    D: Data,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     fn clone(&self) -> Self {
         Self(self.0.clone())
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Reference - Methods
+// -----------------------------------------------------------------------------
+
+impl<D, F> Reference<D, F>
+where
+    D: ValueType,
+    F: ValueType,
+{
+    fn upgrade(&self) -> Option<Directory<D, F>> {
+        self.0.upgrade().map(Directory)
     }
 }
 
@@ -576,17 +600,11 @@ where
 #[derive(Debug)]
 pub struct Internal<D, F>
 where
-    D: Data,
-    F: FileData,
+    D: ValueType,
+    F: ValueType,
 {
     children: HashMap<String, Node<D, F>>,
-    _data: D,
     parent: Option<(String, Reference<D, F>)>,
+    value: Value<D>,
     weak: Reference<D, F>,
 }
-
-// =============================================================================
-// Data
-// =============================================================================
-
-pub trait Data = Default + Send + Sync;

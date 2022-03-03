@@ -33,28 +33,29 @@
     rustdoc::all
 )]
 
+mod data;
 mod directory;
 mod file;
 mod file_system;
 mod node;
-mod traits;
 
+pub use data::{
+    Data,
+    DataExt,
+    Value,
+    ValueType,
+};
 pub use directory::{
-    Data as DirectoryData,
     Directory,
     GetDirError,
     GetError,
     GetFileError,
 };
-pub use file::{
-    Data as FileData,
-    File,
-};
-pub use file_system::FileSystem;
-pub use node::Node;
-pub use traits::{
+pub use file::File;
+pub use file_system::{
     Child,
+    FileSystem,
     Name,
-    Parent,
     Root,
 };
+pub use node::Node;
