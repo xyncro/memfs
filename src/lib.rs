@@ -7,7 +7,9 @@
     missing_copy_implementations,
     missing_debug_implementations,
     nonstandard_style,
-    unsafe_code
+    unsafe_code,
+    unused,
+    warnings
 )]
 #![deny(
     rust_2018_compatibility,
