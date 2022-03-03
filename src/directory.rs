@@ -247,25 +247,46 @@ impl GetPosition {
 
 #[derive(Clone, Copy, Debug, Diagnostic, Error)]
 pub enum GetError {
-    #[diagnostic(code(directory::get::file), help("check the supplied path"))]
+    #[diagnostic(
+        code(directory::get::file),
+        help("check the supplied path")
+    )]
     #[error("path indicated a directory, but a file was found")]
     UnexpectedFile,
-    #[diagnostic(code(directory::get::orphan), help("check the supplied path"))]
+    #[diagnostic(
+        code(directory::get::orphan),
+        help("check the supplied path")
+    )]
     #[error("path indicated parent directory, but current directory has no parent")]
     UnexpectedOrphan,
-    #[diagnostic(code(directory::get::prefix), help("check the supplied path"))]
+    #[diagnostic(
+        code(directory::get::prefix),
+        help("check the supplied path")
+    )]
     #[error("path contained a prefix, which is not supported")]
     UnexpectedPrefix,
-    #[diagnostic(code(directory::get::root), help("check the supplied path"))]
+    #[diagnostic(
+        code(directory::get::root),
+        help("check the supplied path")
+    )]
     #[error("path was an absolute (root) path, but the directory is not a root directory")]
     UnexpectedRoot,
-    #[diagnostic(code(directory::get::endpoint), help("check the supplied path"))]
+    #[diagnostic(
+        code(directory::get::endpoint),
+        help("check the supplied path")
+    )]
     #[error("the endpoint does not exist")]
     EndpointNotFound,
-    #[diagnostic(code(directory::get::intermediate), help("check the supplied path"))]
+    #[diagnostic(
+        code(directory::get::intermediate),
+        help("check the supplied path")
+    )]
     #[error("an intermediate directory does not exist")]
     IntermediateNotFound,
-    #[diagnostic(code(directory::get::other), help("please report this error"))]
+    #[diagnostic(
+        code(directory::get::other),
+        help("please report this error")
+    )]
     #[error("an internal error occurred")]
     Other,
 }
@@ -301,9 +322,16 @@ where
 
 #[derive(Clone, Copy, Debug, Diagnostic, Error)]
 pub enum GetDirError {
-    #[diagnostic(code(directory::get_dir::file), help("check the supplied path"))]
+    #[diagnostic(
+        code(directory::get_dir::file),
+        help("check the supplied path")
+    )]
     #[error("expected directory, but file found")]
     UnexpectedFile,
+    #[diagnostic(
+        code(directory::get_dir::get),
+        help("see internal error")
+    )]
     #[error("internal error getting node")]
     Get(#[from] GetError),
 }
@@ -348,9 +376,16 @@ where
 
 #[derive(Clone, Copy, Debug, Diagnostic, Error)]
 pub enum GetFileError {
-    #[diagnostic(code(directory::get_file::directory), help("check the supplied path"))]
+    #[diagnostic(
+        code(directory::get_file::directory),
+        help("check the supplied path")
+    )]
     #[error("expected file, but directory found")]
     UnexpectedDirectory,
+    #[diagnostic(
+        code(directory::get_dir::get),
+        help("see internal error")
+    )]
     #[error("internal error getting node")]
     Get(#[from] GetError),
 }
