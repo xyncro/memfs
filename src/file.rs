@@ -3,9 +3,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures_util::FutureExt;
 use tokio::sync::{
-    RwLock as Lock,
-    RwLockReadGuard as Read,
-    RwLockWriteGuard as Write,
+    RwLock,
+    RwLockReadGuard,
+    RwLockWriteGuard,
 };
 
 use crate::{
@@ -21,7 +21,7 @@ use crate::{
 // =============================================================================
 
 #[derive(Debug)]
-pub struct File<D, F>(pub(crate) Arc<Lock<Internal<D, F>>>)
+pub struct File<D, F>(pub(crate) Arc<RwLock<Internal<D, F>>>)
 where
     D: DirectoryData,
     F: Data;
@@ -78,7 +78,7 @@ where
 {
     async fn read<T, R>(&self, f: R) -> T
     where
-        R: FnOnce(Read<'_, Internal<D, F>>) -> T + Send,
+        R: FnOnce(RwLockReadGuard<'_, Internal<D, F>>) -> T + Send,
     {
         self.0.read().map(f).await
     }
@@ -86,7 +86,7 @@ where
     #[allow(dead_code)] // TODO: Remove when used
     async fn write<T, W>(&self, f: W) -> T
     where
-        W: FnOnce(Write<'_, Internal<D, F>>) -> T + Send,
+        W: FnOnce(RwLockWriteGuard<'_, Internal<D, F>>) -> T + Send,
     {
         self.0.write().map(f).await
     }
@@ -100,7 +100,7 @@ where
     F: Data,
 {
     pub(crate) fn create(data: Option<F>, parent: (String, Reference<D, F>)) -> Self {
-        Self(Arc::new(Lock::new(Internal {
+        Self(Arc::new(RwLock::new(Internal {
             _data: data.unwrap_or_default(),
             parent,
         })))

@@ -15,9 +15,9 @@ use futures_util::FutureExt;
 use miette::Diagnostic;
 use thiserror::Error;
 use tokio::sync::{
-    RwLock as Lock,
-    RwLockReadGuard as Read,
-    RwLockWriteGuard as Write,
+    RwLock,
+    RwLockReadGuard,
+    RwLockWriteGuard,
 };
 
 use crate::{
@@ -34,7 +34,7 @@ use crate::{
 // =============================================================================
 
 #[derive(Debug)]
-pub struct Directory<D, F>(pub(crate) Arc<Lock<Internal<D, F>>>)
+pub struct Directory<D, F>(pub(crate) Arc<RwLock<Internal<D, F>>>)
 where
     D: Data,
     F: FileData;
@@ -103,14 +103,14 @@ where
 {
     async fn read<T, R>(&self, f: R) -> T
     where
-        R: FnOnce(Read<'_, Internal<D, F>>) -> T + Send,
+        R: FnOnce(RwLockReadGuard<'_, Internal<D, F>>) -> T + Send,
     {
         self.0.read().map(f).await
     }
 
     async fn write<T, W>(&self, f: W) -> T
     where
-        W: FnOnce(Write<'_, Internal<D, F>>) -> T + Send,
+        W: FnOnce(RwLockWriteGuard<'_, Internal<D, F>>) -> T + Send,
     {
         self.0.write().map(f).await
     }
@@ -125,7 +125,7 @@ where
 {
     pub(crate) fn create(data: Option<D>, parent: Option<(String, Reference<D, F>)>) -> Self {
         Self(Arc::new_cyclic(|weak| {
-            Lock::new(Internal {
+            RwLock::new(Internal {
                 children: HashMap::default(),
                 _data: data.unwrap_or_default(),
                 parent,
@@ -548,7 +548,7 @@ where
 // =============================================================================
 
 #[derive(Debug)]
-pub struct Reference<D, F>(pub(crate) Weak<Lock<Internal<D, F>>>)
+pub struct Reference<D, F>(pub(crate) Weak<RwLock<Internal<D, F>>>)
 where
     D: Data,
     F: FileData;
