@@ -1,7 +1,6 @@
 pub mod count;
 pub mod get;
 pub mod get_ext;
-pub mod root;
 
 use std::{
     collections::HashMap,
@@ -27,7 +26,6 @@ use self::{
         GetError,
         GetType,
     },
-    root::Root,
 };
 use super::{
     file::File,
@@ -39,6 +37,7 @@ use super::{
             ValueType,
         },
         named::Named,
+        root::Root,
         Node,
     },
 };
@@ -158,17 +157,6 @@ where
         self.read()
             .map(|this| this.parent.as_ref().map(|parent| parent.0.clone()))
             .await
-    }
-}
-
-#[async_trait]
-impl<D, F> Root<D, F> for Directory<D, F>
-where
-    D: ValueType,
-    F: ValueType,
-{
-    async fn is_root(&self) -> bool {
-        self.read().map(|this| this.parent.is_none()).await
     }
 }
 

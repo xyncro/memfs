@@ -52,11 +52,10 @@ pub mod directory {
             GetType,
         },
         get_ext::{
-            GetDirError,
+            GetDirectoryError,
             GetExt,
             GetFileError,
         },
-        root::Root,
     };
 }
 
@@ -69,6 +68,8 @@ pub mod node {
             ValueType,
         },
         data_ext::DataExt,
+        located::Located,
         named::Named,
+        root::Root,
     };
 }

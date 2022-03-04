@@ -1,7 +1,9 @@
 pub mod child;
 pub mod data;
 pub mod data_ext;
+pub mod located;
 pub mod named;
+pub mod root;
 
 use async_trait::async_trait;
 
@@ -11,10 +13,7 @@ use self::{
     named::Named,
 };
 use super::{
-    directory::{
-        root::Root,
-        Directory,
-    },
+    directory::Directory,
     file::File,
 };
 
@@ -71,20 +70,6 @@ where
         match self {
             Self::Directory(dir) => dir.name().await,
             Self::File(file) => file.name().await,
-        }
-    }
-}
-
-#[async_trait]
-impl<D, F> Root<D, F> for Node<D, F>
-where
-    D: ValueType,
-    F: ValueType,
-{
-    async fn is_root(&self) -> bool {
-        match self {
-            Self::Directory(dir) => dir.is_root().await,
-            Self::File(_) => false,
         }
     }
 }

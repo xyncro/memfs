@@ -19,9 +19,7 @@ use super::{
     Directory,
 };
 
-// =============================================================================
 // GetExt
-// =============================================================================
 
 #[async_trait]
 pub trait GetExt<D, F>
@@ -29,11 +27,11 @@ where
     D: ValueType,
     F: ValueType,
 {
-    async fn get_dir<P>(&self, path: P) -> Result<Option<Directory<D, F>>, GetDirError>
+    async fn get_dir<P>(&self, path: P) -> Result<Option<Directory<D, F>>, GetDirectoryError>
     where
         P: AsRef<Path> + Send;
 
-    async fn get_dir_default<P>(&self, path: P) -> Result<Directory<D, F>, GetDirError>
+    async fn get_dir_default<P>(&self, path: P) -> Result<Directory<D, F>, GetDirectoryError>
     where
         P: AsRef<Path> + Send;
 
@@ -47,7 +45,7 @@ where
 }
 
 #[derive(Clone, Copy, Debug, Error)]
-pub enum GetDirError {
+pub enum GetDirectoryError {
     #[error("expected directory, but file found")]
     UnexpectedFile,
     #[error("internal error getting node")]
@@ -62,9 +60,7 @@ pub enum GetFileError {
     Get(#[from] GetError),
 }
 
-// -----------------------------------------------------------------------------
 // GetExt - Blanket Implementation
-// -----------------------------------------------------------------------------
 
 #[async_trait]
 impl<D, F, G> GetExt<D, F> for G
@@ -73,26 +69,26 @@ where
     D: ValueType,
     F: ValueType,
 {
-    async fn get_dir<P>(&self, path: P) -> Result<Option<Directory<D, F>>, GetDirError>
+    async fn get_dir<P>(&self, path: P) -> Result<Option<Directory<D, F>>, GetDirectoryError>
     where
         P: AsRef<Path> + Send,
     {
         match self.get(path, GetType::Directory).await {
             Ok(Some(Node::Directory(dir))) => Ok(Some(dir)),
-            Ok(Some(Node::File(_))) => Err(GetDirError::UnexpectedFile),
+            Ok(Some(Node::File(_))) => Err(GetDirectoryError::UnexpectedFile),
             Ok(None) => Ok(None),
-            Err(err) => Err(GetDirError::Get(err)),
+            Err(err) => Err(GetDirectoryError::Get(err)),
         }
     }
 
-    async fn get_dir_default<P>(&self, path: P) -> Result<Directory<D, F>, GetDirError>
+    async fn get_dir_default<P>(&self, path: P) -> Result<Directory<D, F>, GetDirectoryError>
     where
         P: AsRef<Path> + Send,
     {
         match self.get_default(path, GetType::Directory).await {
             Ok(Node::Directory(dir)) => Ok(dir),
-            Ok(Node::File(_)) => Err(GetDirError::UnexpectedFile),
-            Err(err) => Err(GetDirError::Get(err)),
+            Ok(Node::File(_)) => Err(GetDirectoryError::UnexpectedFile),
+            Err(err) => Err(GetDirectoryError::Get(err)),
         }
     }
 

@@ -1,10 +1,16 @@
+use std::path::PathBuf;
+
 use anyhow::Result;
 use memfs::{
     directory::{
         Count,
         GetExt,
     },
-    node::DataExt,
+    node::{
+        DataExt,
+        Located,
+        Root,
+    },
     FileSystem,
 };
 
@@ -12,6 +18,7 @@ use memfs::{
 async fn empty_fs() {
     let fs: FileSystem<u32, u32> = FileSystem::new();
 
+    assert!(fs.is_root().await);
     assert_eq!(fs.count().await, 0);
 }
 
@@ -19,6 +26,7 @@ async fn empty_fs() {
 async fn get() -> Result<()> {
     let fs: FileSystem<u32, u32> = FileSystem::new();
     let file = fs.get_file_default("/test_1/test_2").await?;
+    assert_eq!(file.is_root().await, false);
 
     let value = file.read(|value| *value).await;
     assert_eq!(value, 0);
@@ -34,6 +42,8 @@ async fn get() -> Result<()> {
         Some(_) => assert!(true),
         _ => assert!(false),
     }
+
+    assert_eq!(PathBuf::from("/test_1/test_2"), file.path().await);
 
     Ok(())
 }
