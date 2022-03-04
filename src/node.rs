@@ -1,16 +1,20 @@
+pub mod child;
+pub mod data;
+pub mod data_ext;
+pub mod named;
+
 use async_trait::async_trait;
 
 use crate::{
     Child,
     Directory,
     File,
+    Named,
     Root,
     ValueType,
 };
 
-// =============================================================================
 // Node
-// =============================================================================
 
 #[derive(Debug)]
 pub enum Node<D, F>
@@ -22,9 +26,7 @@ where
     File(File<D, F>),
 }
 
-// -----------------------------------------------------------------------------
-// Node - Traits
-// -----------------------------------------------------------------------------
+// Node - Standard Traits
 
 impl<D, F> Clone for Node<D, F>
 where
@@ -39,6 +41,8 @@ where
     }
 }
 
+// Node - Library Traits
+
 #[async_trait]
 impl<D, F> Child<D, F> for Node<D, F>
 where
@@ -49,6 +53,20 @@ where
         match self {
             Self::Directory(dir) => dir.parent().await,
             Self::File(file) => file.parent().await,
+        }
+    }
+}
+
+#[async_trait]
+impl<D, F> Named for Node<D, F>
+where
+    D: ValueType,
+    F: ValueType,
+{
+    async fn name(&self) -> Option<String> {
+        match self {
+            Self::Directory(dir) => dir.name().await,
+            Self::File(file) => file.name().await,
         }
     }
 }

@@ -1,3 +1,8 @@
+pub mod count;
+pub mod get;
+pub mod get_ext;
+pub mod root;
+
 use std::{
     collections::HashMap,
     ops::Deref,
@@ -14,23 +19,23 @@ use std::{
 use async_lock::RwLock;
 use async_trait::async_trait;
 use futures::FutureExt;
-use miette::Diagnostic;
-use thiserror::Error;
 
 use crate::{
     Child,
+    Count,
     Data,
     File,
-    Name,
+    Get,
+    GetError,
+    GetType,
+    Named,
     Node,
     Root,
     Value,
     ValueType,
 };
 
-// =============================================================================
 // Directory
-// =============================================================================
 
 #[derive(Debug)]
 pub struct Directory<D, F>(pub(crate) Arc<RwLock<Internal<D, F>>>)
@@ -38,9 +43,7 @@ where
     D: ValueType,
     F: ValueType;
 
-// -----------------------------------------------------------------------------
-// Directory - Traits
-// -----------------------------------------------------------------------------
+// Directory - Standard Traits
 
 impl<D, F> Clone for Directory<D, F>
 where
@@ -64,15 +67,39 @@ where
     }
 }
 
+// Directory - Library Traits
+
 #[async_trait]
 impl<D, F> Child<D, F> for Directory<D, F>
 where
     D: ValueType,
     F: ValueType,
 {
-    async fn parent(&self) -> Option<Self> {
+    #[allow(clippy::use_self)]
+    async fn parent(&self) -> Option<Directory<D, F>> {
         self.read()
             .map(|this| this.parent.as_ref().and_then(|parent| parent.1.upgrade()))
+            .await
+    }
+}
+
+#[async_trait]
+impl<D, F> Count for Directory<D, F>
+where
+    D: ValueType,
+    F: ValueType,
+{
+    async fn count(&self) -> usize {
+        self.count_predicate(|_| true).await
+    }
+
+    async fn count_dir(&self) -> usize {
+        self.count_predicate(|child| matches!(child, Node::Directory(_)))
+            .await
+    }
+
+    async fn count_file(&self) -> usize {
+        self.count_predicate(|child| matches!(child, Node::File(_)))
             .await
     }
 }
@@ -89,7 +116,32 @@ where
 }
 
 #[async_trait]
-impl<D, F> Name for Directory<D, F>
+impl<D, F> Get<D, F> for Directory<D, F>
+where
+    D: ValueType,
+    F: ValueType,
+{
+    async fn get<P>(&self, path: P, get_type: GetType) -> Result<Option<Node<D, F>>, GetError>
+    where
+        P: AsRef<Path> + Send,
+    {
+        self.get(path, GetAction::ReturnNone, get_type).await
+    }
+
+    async fn get_default<P>(&self, path: P, get_type: GetType) -> Result<Node<D, F>, GetError>
+    where
+        P: AsRef<Path> + Send,
+    {
+        match self.get(path, GetAction::CreateDefault, get_type).await {
+            Ok(Some(node)) => Ok(node),
+            Ok(None) => Err(GetError::Other),
+            Err(err) => Err(err),
+        }
+    }
+}
+
+#[async_trait]
+impl<D, F> Named for Directory<D, F>
 where
     D: ValueType,
     F: ValueType,
@@ -112,11 +164,7 @@ where
     }
 }
 
-// -----------------------------------------------------------------------------
 // Directory - Methods
-// -----------------------------------------------------------------------------
-
-// Directory - Methods - Create
 
 impl<D, F> Directory<D, F>
 where
@@ -161,43 +209,20 @@ mod create_tests {
     // }
 }
 
-// Directory - Methods - Count
-
 impl<D, F> Directory<D, F>
 where
     D: ValueType,
     F: ValueType,
 {
-    pub async fn count(&self) -> usize {
-        self.read()
-            .then(|this| async move {
-                this.children
-                    .read()
-                    .map(|children| children.keys().len())
-                    .await
-            })
-            .await
-    }
-
-    pub async fn count_dir(&self) -> usize {
-        self.count_predicate(|child| matches!(child, Node::Directory(_)))
-            .await
-    }
-
-    pub async fn count_file(&self) -> usize {
-        self.count_predicate(|child| matches!(child, Node::File(_)))
-            .await
-    }
-
     async fn count_predicate<P>(&self, predicate: P) -> usize
     where
-        P: Fn(&Node<D, F>) -> bool + Send + Sync,
+        P: FnMut(&&Node<D, F>) -> bool + Send + Sync,
     {
         self.read()
             .then(|this| async move {
                 this.children
                     .read()
-                    .map(|children| children.values().filter(|child| predicate(child)).count())
+                    .map(|children| children.values().filter(predicate).count())
                     .await
             })
             .await
@@ -206,7 +231,10 @@ where
 
 #[cfg(test)]
 mod count_tests {
-    use super::Directory;
+    use super::{
+        Count,
+        Directory,
+    };
 
     #[tokio::test]
     async fn count_empty() {
@@ -218,30 +246,11 @@ mod count_tests {
     }
 }
 
-// Directory - Methods - GetNode
-
-#[derive(Clone, Copy, Debug)]
-pub enum GetType {
-    Directory,
-    File,
-}
-
-impl Default for GetType {
-    fn default() -> Self {
-        Self::Directory
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 enum GetAction {
     CreateDefault,
+    #[default]
     ReturnNone,
-}
-
-impl Default for GetAction {
-    fn default() -> Self {
-        Self::ReturnNone
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -250,67 +259,12 @@ enum GetPosition {
     Parent,
 }
 
-impl GetPosition {
-    const fn from_next(component: Option<&Component<'_>>) -> Self {
-        match component {
-            Some(_) => Self::Parent,
-            _ => Self::Child,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Diagnostic, Error)]
-pub enum GetError {
-    #[diagnostic(
-        code(directory::get::file),
-        help("check the supplied path")
-    )]
-    #[error("path indicated a directory, but a file was found")]
-    UnexpectedFile,
-    #[diagnostic(
-        code(directory::get::orphan),
-        help("check the supplied path")
-    )]
-    #[error("path indicated parent directory, but current directory has no parent")]
-    UnexpectedOrphan,
-    #[diagnostic(
-        code(directory::get::prefix),
-        help("check the supplied path")
-    )]
-    #[error("path contained a prefix, which is not supported")]
-    UnexpectedPrefix,
-    #[diagnostic(
-        code(directory::get::root),
-        help("check the supplied path")
-    )]
-    #[error("path was an absolute (root) path, but the directory is not a root directory")]
-    UnexpectedRoot,
-    #[diagnostic(
-        code(directory::get::endpoint),
-        help("check the supplied path")
-    )]
-    #[error("the endpoint does not exist")]
-    EndpointNotFound,
-    #[diagnostic(
-        code(directory::get::intermediate),
-        help("check the supplied path")
-    )]
-    #[error("an intermediate directory does not exist")]
-    IntermediateNotFound,
-    #[diagnostic(
-        code(directory::get::other),
-        help("please report this error")
-    )]
-    #[error("an internal error occurred")]
-    Other,
-}
-
 impl<D, F> Directory<D, F>
 where
     D: ValueType,
     F: ValueType,
 {
-    async fn get_node<P>(
+    async fn get<P>(
         &self,
         path: P,
         get_action: GetAction,
@@ -327,14 +281,16 @@ where
                 Some(Node::Directory(dir)) => match component {
                     Component::CurDir => {}
                     Component::Prefix(_) => return Err(GetError::UnexpectedPrefix),
-                    Component::RootDir => current = dir.get_node_root().await?,
-                    Component::ParentDir => current = dir.get_node_parent().await?,
+                    Component::RootDir => current = dir.get_root().await?,
+                    Component::ParentDir => current = dir.get_parent().await?,
                     Component::Normal(name) => {
                         let name = String::from(name.to_string_lossy());
-                        let get_position = GetPosition::from_next(components.peek());
+                        let get_position = components
+                            .peek()
+                            .map_or(GetPosition::Child, |_| GetPosition::Parent);
 
                         current = dir
-                            .get_node_named(name, get_position, get_action, get_type)
+                            .get_named(name, get_position, get_action, get_type)
                             .await?;
                     }
                 },
@@ -347,43 +303,37 @@ where
     }
 
     #[allow(clippy::match_bool)]
-    async fn get_node_root(&self) -> Result<Option<Node<D, F>>, GetError> {
+    async fn get_root(&self) -> Result<Option<Node<D, F>>, GetError> {
         match self.is_root().await {
             true => Ok(Some(Node::Directory(self.clone()))),
             _ => Err(GetError::UnexpectedRoot),
         }
     }
 
-    async fn get_node_parent(&self) -> Result<Option<Node<D, F>>, GetError> {
+    async fn get_parent(&self) -> Result<Option<Node<D, F>>, GetError> {
         match self.parent().await {
             Some(parent) => Ok(Some(Node::Directory(parent))),
             _ => Err(GetError::UnexpectedOrphan),
         }
     }
 
-    async fn get_node_named(
+    async fn get_named(
         &self,
         name: String,
         get_position: GetPosition,
         get_action: GetAction,
         get_type: GetType,
     ) -> Result<Option<Node<D, F>>, GetError> {
-        match self.get_node_named_child(&name).await {
+        match self.get_child(&name).await {
             Some(node) => Ok(Some(node)),
             _ => match get_position {
-                GetPosition::Child => {
-                    self.get_node_named_child_action(name, get_action, get_type)
-                        .await
-                }
-                GetPosition::Parent => {
-                    self.get_node_named_child_action(name, get_action, GetType::Directory)
-                        .await
-                }
+                GetPosition::Child => self.get_action(name, get_action, get_type).await,
+                GetPosition::Parent => self.get_action(name, get_action, GetType::Directory).await,
             },
         }
     }
 
-    async fn get_node_named_child(&self, name: &str) -> Option<Node<D, F>> {
+    async fn get_child(&self, name: &str) -> Option<Node<D, F>> {
         self.read()
             .then(|this| async move {
                 this.children
@@ -394,7 +344,7 @@ where
             .await
     }
 
-    async fn get_node_named_child_action(
+    async fn get_action(
         &self,
         name: String,
         get_action: GetAction,
@@ -405,21 +355,15 @@ where
                 self.read()
                     .then(|this| async move {
                         let parent = (name.clone(), this.weak.clone());
-                        let node = match get_type {
-                            GetType::Directory => {
-                                let dir = Self::create(None, Some(parent));
-                                Node::Directory(dir)
-                            }
-                            GetType::File => {
-                                let file = File::create(None, parent);
-                                Node::File(file)
-                            }
+                        let new_node = match get_type {
+                            GetType::Directory => Node::Directory(Self::create(None, Some(parent))),
+                            GetType::File => Node::File(File::create(None, parent)),
                         };
 
                         let node = this
                             .children
                             .write()
-                            .map(|mut children| match children.try_insert(name, node) {
+                            .map(|mut children| match children.try_insert(name, new_node) {
                                 Ok(node) => node.clone(),
                                 Err(err) => err.entry.get().clone(),
                             })
@@ -434,187 +378,15 @@ where
     }
 }
 
-// =============================================================================
-// Get
-// =============================================================================
-
-#[async_trait]
-pub trait Get<D, F>
-where
-    D: ValueType,
-    F: ValueType,
-{
-    async fn get<P>(&self, path: P, get_type: GetType) -> Result<Option<Node<D, F>>, GetError>
-    where
-        P: AsRef<Path> + Send;
-
-    async fn get_default<P>(&self, path: P, get_type: GetType) -> Result<Node<D, F>, GetError>
-    where
-        P: AsRef<Path> + Send;
-}
-
-// -----------------------------------------------------------------------------
-// Get - Implementations
-// -----------------------------------------------------------------------------
-
-#[async_trait]
-impl<D, F> Get<D, F> for Directory<D, F>
-where
-    D: ValueType,
-    F: ValueType,
-{
-    async fn get<P>(&self, path: P, get_type: GetType) -> Result<Option<Node<D, F>>, GetError>
-    where
-        P: AsRef<Path> + Send,
-    {
-        self.get_node(path, GetAction::ReturnNone, get_type).await
-    }
-
-    async fn get_default<P>(&self, path: P, get_type: GetType) -> Result<Node<D, F>, GetError>
-    where
-        P: AsRef<Path> + Send,
-    {
-        match self
-            .get_node(path, GetAction::CreateDefault, get_type)
-            .await
-        {
-            Ok(Some(node)) => Ok(node),
-            Ok(None) => Err(GetError::Other),
-            Err(err) => Err(err),
-        }
-    }
-}
-
-// =============================================================================
-// GetExt
-// =============================================================================
-
-#[async_trait]
-pub trait GetExt<D, F>
-where
-    D: ValueType,
-    F: ValueType,
-{
-    async fn get_dir<P>(&self, path: P) -> Result<Option<Directory<D, F>>, GetDirError>
-    where
-        P: AsRef<Path> + Send;
-
-    async fn get_dir_default<P>(&self, path: P) -> Result<Directory<D, F>, GetDirError>
-    where
-        P: AsRef<Path> + Send;
-
-    async fn get_file<P>(&self, path: P) -> Result<Option<File<D, F>>, GetFileError>
-    where
-        P: AsRef<Path> + Send;
-
-    async fn get_file_default<P>(&self, path: P) -> Result<File<D, F>, GetFileError>
-    where
-        P: AsRef<Path> + Send;
-}
-
-#[derive(Clone, Copy, Debug, Diagnostic, Error)]
-pub enum GetDirError {
-    #[diagnostic(
-        code(directory::get_dir::file),
-        help("check the supplied path")
-    )]
-    #[error("expected directory, but file found")]
-    UnexpectedFile,
-    #[diagnostic(
-        code(directory::get_dir::get),
-        help("see internal error")
-    )]
-    #[error("internal error getting node")]
-    Get(#[from] GetError),
-}
-
-#[derive(Clone, Copy, Debug, Diagnostic, Error)]
-pub enum GetFileError {
-    #[diagnostic(
-        code(directory::get_file::directory),
-        help("check the supplied path")
-    )]
-    #[error("expected file, but directory found")]
-    UnexpectedDirectory,
-    #[diagnostic(
-        code(directory::get_dir::get),
-        help("see internal error")
-    )]
-    #[error("internal error getting node")]
-    Get(#[from] GetError),
-}
-
-// -----------------------------------------------------------------------------
-// GetExt - Implementations
-// -----------------------------------------------------------------------------
-
-#[async_trait]
-impl<D, F, G> GetExt<D, F> for G
-where
-    G: Get<D, F> + Sync,
-    D: ValueType,
-    F: ValueType,
-{
-    async fn get_dir<P>(&self, path: P) -> Result<Option<Directory<D, F>>, GetDirError>
-    where
-        P: AsRef<Path> + Send,
-    {
-        match self.get(path, GetType::Directory).await {
-            Ok(Some(Node::Directory(dir))) => Ok(Some(dir)),
-            Ok(Some(Node::File(_))) => Err(GetDirError::UnexpectedFile),
-            Ok(None) => Ok(None),
-            Err(err) => Err(GetDirError::Get(err)),
-        }
-    }
-
-    async fn get_dir_default<P>(&self, path: P) -> Result<Directory<D, F>, GetDirError>
-    where
-        P: AsRef<Path> + Send,
-    {
-        match self.get_default(path, GetType::Directory).await {
-            Ok(Node::Directory(dir)) => Ok(dir),
-            Ok(Node::File(_)) => Err(GetDirError::UnexpectedFile),
-            Err(err) => Err(GetDirError::Get(err)),
-        }
-    }
-
-    async fn get_file<P>(&self, path: P) -> Result<Option<File<D, F>>, GetFileError>
-    where
-        P: AsRef<Path> + Send,
-    {
-        match self.get(path, GetType::File).await {
-            Ok(Some(Node::Directory(_))) => Err(GetFileError::UnexpectedDirectory),
-            Ok(Some(Node::File(file))) => Ok(Some(file)),
-            Ok(None) => Ok(None),
-            Err(err) => Err(GetFileError::Get(err)),
-        }
-    }
-
-    async fn get_file_default<P>(&self, path: P) -> Result<File<D, F>, GetFileError>
-    where
-        P: AsRef<Path> + Send,
-    {
-        match self.get_default(path, GetType::File).await {
-            Ok(Node::Directory(_)) => Err(GetFileError::UnexpectedDirectory),
-            Ok(Node::File(file)) => Ok(file),
-            Err(err) => Err(GetFileError::Get(err)),
-        }
-    }
-}
-
-// =============================================================================
 // Children
-// =============================================================================
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Children<D, F>(pub(crate) Arc<RwLock<HashMap<String, Node<D, F>>>>)
 where
     D: ValueType,
     F: ValueType;
 
-// -----------------------------------------------------------------------------
-// Children - Traits
-// -----------------------------------------------------------------------------
+// Children - Standard Traits
 
 impl<D, F> Clone for Children<D, F>
 where
@@ -623,16 +395,6 @@ where
 {
     fn clone(&self) -> Self {
         Self(self.0.clone())
-    }
-}
-
-impl<D, F> Default for Children<D, F>
-where
-    D: ValueType,
-    F: ValueType,
-{
-    fn default() -> Self {
-        Self(Arc::new(RwLock::new(HashMap::default())))
     }
 }
 
@@ -648,9 +410,7 @@ where
     }
 }
 
-// =============================================================================
 // Reference
-// =============================================================================
 
 #[derive(Debug)]
 pub struct Reference<D, F>(pub(crate) Weak<RwLock<Internal<D, F>>>)
@@ -658,9 +418,7 @@ where
     D: ValueType,
     F: ValueType;
 
-// -----------------------------------------------------------------------------
-// Reference - Traits
-// -----------------------------------------------------------------------------
+// Reference - Standard Traits
 
 impl<D, F> Clone for Reference<D, F>
 where
@@ -672,9 +430,7 @@ where
     }
 }
 
-// -----------------------------------------------------------------------------
 // Reference - Methods
-// -----------------------------------------------------------------------------
 
 impl<D, F> Reference<D, F>
 where
@@ -686,9 +442,7 @@ where
     }
 }
 
-// =============================================================================
 // Internal
-// =============================================================================
 
 #[derive(Debug)]
 pub struct Internal<D, F>

@@ -1,9 +1,5 @@
 use anyhow::Result;
-use memfs::{
-    DataExt,
-    FileSystem,
-    GetExt,
-};
+use memfs::*;
 
 #[tokio::test]
 async fn empty_fs() {

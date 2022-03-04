@@ -1,4 +1,5 @@
 #![feature(
+    derive_default_enum,
     map_try_insert,
     trait_alias
 )]
@@ -33,31 +34,36 @@
     rustdoc::all
 )]
 
-mod data;
 mod directory;
 mod file;
 mod file_system;
 mod node;
 
-pub use data::{
-    Data,
-    DataExt,
-    Value,
-    ValueType,
-};
 pub use directory::{
+    count::Count,
+    get::{
+        Get,
+        GetError,
+        GetType,
+    },
+    get_ext::{
+        GetDirError,
+        GetExt,
+        GetFileError,
+    },
+    root::Root,
     Directory,
-    Get,
-    GetDirError,
-    GetError,
-    GetExt,
-    GetFileError,
 };
 pub use file::File;
-pub use file_system::{
-    Child,
-    FileSystem,
-    Name,
-    Root,
+pub use file_system::FileSystem;
+pub use node::{
+    child::Child,
+    data::{
+        Data,
+        Value,
+        ValueType,
+    },
+    data_ext::DataExt,
+    named::Named,
+    Node,
 };
-pub use node::Node;

@@ -12,14 +12,12 @@ use crate::{
     Child,
     Data,
     Directory,
-    Name,
+    Named,
     Value,
     ValueType,
 };
 
-// =============================================================================
 // File
-// =============================================================================
 
 #[derive(Debug)]
 pub struct File<D, F>(pub(crate) Arc<RwLock<Internal<D, F>>>)
@@ -27,9 +25,7 @@ where
     D: ValueType,
     F: ValueType;
 
-// -----------------------------------------------------------------------------
-// File - Traits
-// -----------------------------------------------------------------------------
+// File - Standard Traits
 
 impl<D, F> Clone for File<D, F>
 where
@@ -52,6 +48,8 @@ where
         &self.0
     }
 }
+
+// File - Library Traits
 
 #[async_trait]
 impl<D, F> Child<D, F> for File<D, F>
@@ -80,7 +78,7 @@ where
 }
 
 #[async_trait]
-impl<D, F> Name for File<D, F>
+impl<D, F> Named for File<D, F>
 where
     D: ValueType,
     F: ValueType,
@@ -90,11 +88,7 @@ where
     }
 }
 
-// -----------------------------------------------------------------------------
 // File - Methods
-// -----------------------------------------------------------------------------
-
-// File - Methods - Create
 
 impl<D, F> File<D, F>
 where
@@ -110,9 +104,7 @@ where
     }
 }
 
-// =============================================================================
 // Internals
-// =============================================================================
 
 #[derive(Debug)]
 pub struct Internal<D, F>
