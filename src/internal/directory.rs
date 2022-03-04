@@ -20,19 +20,27 @@ use async_lock::RwLock;
 use async_trait::async_trait;
 use futures::FutureExt;
 
-use crate::{
-    Child,
-    Count,
-    Data,
-    File,
-    Get,
-    GetError,
-    GetType,
-    Named,
-    Node,
-    Root,
-    Value,
-    ValueType,
+use self::{
+    count::Count,
+    get::{
+        Get,
+        GetError,
+        GetType,
+    },
+    root::Root,
+};
+use super::{
+    file::File,
+    node::{
+        child::Child,
+        data::{
+            Data,
+            Value,
+            ValueType,
+        },
+        named::Named,
+        Node,
+    },
 };
 
 // Directory

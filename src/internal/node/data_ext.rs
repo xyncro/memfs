@@ -5,7 +5,7 @@ use async_lock::{
 use async_trait::async_trait;
 use futures::FutureExt;
 
-use crate::{
+use super::data::{
     Data,
     ValueType,
 };

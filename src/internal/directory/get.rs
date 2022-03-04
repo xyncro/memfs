@@ -3,9 +3,9 @@ use std::path::Path;
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::{
+use super::super::node::{
+    data::ValueType,
     Node,
-    ValueType,
 };
 
 // Get

@@ -34,36 +34,41 @@
     rustdoc::all
 )]
 
-mod directory;
-mod file;
-mod file_system;
-mod node;
+mod internal;
 
-pub use directory::{
-    count::Count,
-    get::{
-        Get,
-        GetError,
-        GetType,
-    },
-    get_ext::{
-        GetDirError,
-        GetExt,
-        GetFileError,
-    },
-    root::Root,
-    Directory,
+pub use internal::{
+    directory::Directory,
+    file::File,
+    file_system::FileSystem,
+    node::Node,
 };
-pub use file::File;
-pub use file_system::FileSystem;
-pub use node::{
-    child::Child,
-    data::{
-        Data,
-        Value,
-        ValueType,
-    },
-    data_ext::DataExt,
-    named::Named,
-    Node,
-};
+
+pub mod directory {
+    pub use super::internal::directory::{
+        count::Count,
+        get::{
+            Get,
+            GetError,
+            GetType,
+        },
+        get_ext::{
+            GetDirError,
+            GetExt,
+            GetFileError,
+        },
+        root::Root,
+    };
+}
+
+pub mod node {
+    pub use super::internal::node::{
+        child::Child,
+        data::{
+            Data,
+            Value,
+            ValueType,
+        },
+        data_ext::DataExt,
+        named::Named,
+    };
+}

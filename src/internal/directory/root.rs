@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::ValueType;
+use super::super::node::data::ValueType;
 
 // Root
 

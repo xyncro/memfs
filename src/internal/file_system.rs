@@ -1,8 +1,8 @@
 use std::ops::Deref;
 
-use crate::{
-    Directory,
-    ValueType,
+use super::{
+    directory::Directory,
+    node::data::ValueType,
 };
 
 // FileSystem

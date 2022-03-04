@@ -7,14 +7,20 @@ use async_lock::RwLock;
 use async_trait::async_trait;
 use futures::FutureExt;
 
-use crate::{
-    directory::Reference,
-    Child,
-    Data,
-    Directory,
-    Named,
-    Value,
-    ValueType,
+use super::{
+    directory::{
+        Directory,
+        Reference,
+    },
+    node::{
+        child::Child,
+        data::{
+            Data,
+            Value,
+            ValueType,
+        },
+        named::Named,
+    },
 };
 
 // File
