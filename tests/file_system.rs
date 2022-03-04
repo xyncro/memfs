@@ -2,6 +2,7 @@ use anyhow::Result;
 use memfs::{
     DataExt,
     FileSystem,
+    GetExt,
 };
 
 #[tokio::test]

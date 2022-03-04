@@ -47,8 +47,10 @@ pub use data::{
 };
 pub use directory::{
     Directory,
+    Get,
     GetDirError,
     GetError,
+    GetExt,
     GetFileError,
 };
 pub use file::File;

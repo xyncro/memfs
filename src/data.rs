@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    ops::Deref,
+    sync::Arc,
+};
 
 use async_lock::{
     RwLock,
@@ -34,10 +37,14 @@ where
     where
         R: FnOnce(RwLockReadGuard<'_, V>) -> T + Send;
 
-    async fn write<W>(&self, f: W)
+    async fn write<T, W>(&self, f: W) -> T
     where
-        W: FnMut(RwLockWriteGuard<'_, V>) + Send;
+        W: FnMut(RwLockWriteGuard<'_, V>) -> T + Send;
 }
+
+// -----------------------------------------------------------------------------
+// DataExt - Implementations
+// -----------------------------------------------------------------------------
 
 #[async_trait]
 impl<D, V> DataExt<V> for D
@@ -50,16 +57,16 @@ where
         R: FnOnce(RwLockReadGuard<'_, V>) -> T + Send,
     {
         self.data()
-            .then(|value| async move { value.0.read().map(|value| f(value)).await })
+            .then(|value| async move { value.read().map(|value| f(value)).await })
             .await
     }
 
-    async fn write<W>(&self, f: W)
+    async fn write<T, W>(&self, f: W) -> T
     where
-        W: FnOnce(RwLockWriteGuard<'_, V>) + Send,
+        W: FnOnce(RwLockWriteGuard<'_, V>) -> T + Send,
     {
         self.data()
-            .then(|value| async move { value.0.write().map(|value| f(value)).await })
+            .then(|value| async move { value.write().map(|value| f(value)).await })
             .await
     }
 }
@@ -92,6 +99,17 @@ where
 {
     fn default() -> Self {
         Self(Arc::new(RwLock::new(D::default())))
+    }
+}
+
+impl<D> Deref for Value<D>
+where
+    D: ValueType,
+{
+    type Target = Arc<RwLock<D>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
