@@ -1,10 +1,9 @@
-use std::sync::Arc;
-
-use async_lock::{
-    RwLock,
-    RwLockReadGuard,
-    RwLockWriteGuard,
+use std::{
+    ops::Deref,
+    sync::Arc,
 };
+
+use async_lock::RwLock;
 use async_trait::async_trait;
 use futures::FutureExt;
 
@@ -42,6 +41,18 @@ where
     }
 }
 
+impl<D, F> Deref for File<D, F>
+where
+    D: ValueType,
+    F: ValueType,
+{
+    type Target = Arc<RwLock<Internal<D, F>>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 #[async_trait]
 impl<D, F> Child<D, F> for File<D, F>
 where
@@ -49,7 +60,8 @@ where
     F: ValueType,
 {
     async fn parent(&self) -> Option<Directory<D, F>> {
-        self.read(|file| file.parent.1.clone())
+        self.read()
+            .map(|this| this.parent.1.clone())
             .map(|Reference(parent)| parent.upgrade())
             .map(|parent| parent.map(Directory))
             .await
@@ -63,7 +75,7 @@ where
     F: ValueType,
 {
     async fn data(&self) -> Value<F> {
-        self.read(|file| file.value.clone()).await
+        self.read().map(|this| this.value.clone()).await
     }
 }
 
@@ -74,36 +86,13 @@ where
     F: ValueType,
 {
     async fn name(&self) -> Option<String> {
-        self.read(|file| Some(file.parent.0.clone())).await
+        self.read().map(|this| Some(this.parent.0.clone())).await
     }
 }
 
 // -----------------------------------------------------------------------------
 // File - Methods
 // -----------------------------------------------------------------------------
-
-// File - Methods - Read & Write
-
-impl<D, F> File<D, F>
-where
-    D: ValueType,
-    F: ValueType,
-{
-    async fn read<T, R>(&self, f: R) -> T
-    where
-        R: FnOnce(RwLockReadGuard<'_, Internal<D, F>>) -> T + Send,
-    {
-        self.0.read().map(f).await
-    }
-
-    #[allow(dead_code)] // TODO: Remove when used
-    async fn write<T, W>(&self, f: W) -> T
-    where
-        W: FnOnce(RwLockWriteGuard<'_, Internal<D, F>>) -> T + Send,
-    {
-        self.0.write().map(f).await
-    }
-}
 
 // File - Methods - Create
 
@@ -115,14 +104,14 @@ where
     #[must_use]
     pub(crate) fn create(value: Option<F>, parent: (String, Reference<D, F>)) -> Self {
         Self(Arc::new(RwLock::new(Internal {
-            value: Value::from_option(value),
             parent,
+            value: Value::from_option(value),
         })))
     }
 }
 
 // =============================================================================
-// Internal
+// Internals
 // =============================================================================
 
 #[derive(Debug)]

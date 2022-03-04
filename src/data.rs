@@ -50,16 +50,16 @@ where
         R: FnOnce(RwLockReadGuard<'_, V>) -> T + Send,
     {
         self.data()
-            .then(|value| async move { value.read(|value| f(value)).await })
+            .then(|value| async move { value.0.read().map(|value| f(value)).await })
             .await
     }
 
-    async fn write<W>(&self, mut f: W)
+    async fn write<W>(&self, f: W)
     where
-        W: FnMut(RwLockWriteGuard<'_, V>) + Send,
+        W: FnOnce(RwLockWriteGuard<'_, V>) + Send,
     {
         self.data()
-            .then(|value| async move { value.write(|value| f(value)).await })
+            .then(|value| async move { value.0.write().map(|value| f(value)).await })
             .await
     }
 }
@@ -98,25 +98,6 @@ where
 // -----------------------------------------------------------------------------
 // Value - Methods
 // -----------------------------------------------------------------------------
-
-impl<D> Value<D>
-where
-    D: ValueType,
-{
-    pub async fn read<T, R>(&self, f: R) -> T
-    where
-        R: FnOnce(RwLockReadGuard<'_, D>) -> T,
-    {
-        self.0.read().map(f).await
-    }
-
-    pub async fn write<W>(&self, f: W)
-    where
-        W: FnMut(RwLockWriteGuard<'_, D>),
-    {
-        self.0.write().map(f).await
-    }
-}
 
 // Value - Methods - From
 
