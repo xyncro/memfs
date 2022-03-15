@@ -30,9 +30,12 @@ where
     F: ValueType,
 {
     async fn path(&self) -> PathBuf {
-        match (self.name().await, self.parent().await) {
-            (Some(name), Some(parent)) => parent.path().map(|path| path.join(name)).await,
-            _ => PathBuf::from("/"),
+        if let Some(name) = self.name().await {
+            if let Some(parent) = self.parent().await {
+                return parent.path().map(|path| path.join(name)).await;
+            }
         }
+
+        PathBuf::from("/")
     }
 }
